@@ -27,7 +27,7 @@ podman run -it --rm \
     -v "$HOME/.claude:$HOME/.claude:z" \
     -v "$HOME/.claude.json:$HOME/.claude.json:z" \
     -e "PATH=/sbin:/bin:$PATH" \
-  hyprhvn/claude-container:latest
+  docker.io/hyprhvn/claude-container:full
 ```
 
 > [!NOTE]
