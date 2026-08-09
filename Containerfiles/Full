@@ -1,5 +1,4 @@
 FROM docker.io/hyprhvn/claude-container:base
-podman push docker.io
 
 # add common dev tooling
 RUN apk update && apk add --no-cache \
