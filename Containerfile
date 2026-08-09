@@ -8,10 +8,6 @@ RUN wget -O /etc/apk/keys/claude-code.rsa.pub \
 
 # Install Claude Code
 RUN apk update && apk add --no-cache claude-code
-
-# Create a non-root user and workspace
-RUN adduser -D -u 1000 claude
-USER claude
 WORKDIR /workspace
 
 ENTRYPOINT ["claude"]
