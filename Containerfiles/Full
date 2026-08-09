@@ -7,7 +7,7 @@ RUN apk update && apk add --no-cache \
     findutils \
     grep \
     sed \
-    awk \
+    gawk \
     curl \
     wget \
     jq \
