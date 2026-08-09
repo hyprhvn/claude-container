@@ -12,6 +12,7 @@ RUN apk update && apk add --no-cache \
     wget \
     jq \
     git \
+    git-lfs \
     openssh-client \
     build-base \
     musl-dev \
