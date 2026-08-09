@@ -1,0 +1,22 @@
+FROM docker.io/hyprhvn/claude-container:base
+podman push docker.io
+
+# add common dev tooling
+RUN apk update && apk add --no-cache \
+    bash \
+    coreutils \
+    findutils \
+    grep \
+    sed \
+    awk \
+    curl \
+    wget \
+    jq \
+    git \
+    openssh-client \
+    build-base \
+    musl-dev \
+    python3 \
+    py3-pip \
+    procps \
+    iproute2

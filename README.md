@@ -8,8 +8,12 @@ Build and push this with:
 
 ```bash
 podman login -u hyprhvn docker.io
+# build the base container
 podman build -f Containerfiles/Base -t docker.io/hyprhvn/claude-container:base
 podman push docker.io/hyprhvn/claude-container:base
+# build the full dev container
+podman build -f Containerfiles/Full -t docker.io/hyprhvn/claude-container:full
+podman push docker.io/hyprhvn/claude-container:full
 ```
 
 ## Use
