@@ -26,15 +26,28 @@ podman run -it --rm \
     -v "$PWD:$PWD:z" \
     -v "$HOME/.claude:$HOME/.claude:z" \
     -v "$HOME/.claude.json:$HOME/.claude.json:z" \
+    -v "$HOME/.dotfiles:$HOME/.dotfiles:ro,z" \
+    -v "$HOME/.config/git:$HOME/.config/git:ro,z" \
     -e "PATH=/sbin:/bin:$PATH" \
+    -v "$HOME/.ssh/known_hosts:/etc/ssh/ssh_known_hosts:ro,z" \
+    -v "$HOME/.ssh/config:/etc/ssh/ssh_config:ro,z" \
+    -v "$HOME/.ssh/config.d/git.config:/etc/ssh/config.d/git.config:ro,z" \
+    -v "$HOME/.ssh/id_github:/root/.ssh/id_github:ro,z" \
+    -v "$HOME/.ssh/id_gitlab:/root/.ssh/id_gitlab:ro,z" \
+    -v "$HOME/.bashrc:$HOME/.bashrc:ro,z" \
+    -v "$HOME/.bashrc.d:$HOME/.bashrc.d:ro,z" \
+    -v "$HOME/.bash_profile:$HOME/.bash_profile:ro,z" \
+    -v "$HOME/.bash_profile.d:$HOME/.bash_profile.d:ro,z" \
+    -v "$HOME/.local/bin:$HOME/.local/bin:ro,z" \
+    -v "$HOME/.local/opt:$HOME/.local/opt:ro,z" \
   docker.io/hyprhvn/claude-container:full
 ```
 
 > [!NOTE]
 >
-> It might be a good idea to also mount other directories:
+> It might be a good idea to also mount other directories, e.g.:
 >
 > - `~/.ssh`
 > - `~/.config/git`
-> 
+>
 > Probably best to mount these read-only though.

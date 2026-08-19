@@ -59,7 +59,7 @@ NAME
 
 SYNOPSIS
     $prog [-h | --help] [-v | --verbose] [-q | --quiet]
-    $indent [-m | --mount MOUNT] [DIR]
+    $indent [-m | --mount MOUNT]... [DIR]
 
 DESCRIPTION
 
@@ -75,7 +75,11 @@ OPTIONS
 
     Advanced Options
 
-        -m, --mount    additional directories to mount (NOT IMPLEMENTED YET)
+        -m, --mount    mount an additional host path into the container, in
+                       the podman -v syntax, <from>:<to>[:<options>]. May be
+                       given more than once. <to> defaults to the resolved
+                       <from>, <options> defaults to z. Sources are resolved
+                       through symlinks, targets are used as given.
 
     Positional Arguments
 
@@ -102,9 +106,14 @@ get_opts() {
                 ;;
             # Advanced Options
             -m|--mount)
+                if [[ $# -lt 2 ]]; then
+                    echo -e "Missing argument for ${argument}\n"
+                    usage
+                    exit 2
+                fi
                 shift
-            	MOUNTS+=("${1}")
-            	;;
+                MOUNTS+=("${1}")
+                ;;
             -*)  # fail on unrecognized flags
                 echo -e "Unknown flag ${argument}\n"
                 usage
@@ -229,6 +238,54 @@ collect_git_config() {
     fi
 }
 
+# Collect the mounts requested on the command line with -m/--mount
+#
+# Each entry uses the podman -v syntax, <from>:<to>[:<options>]. Sources go
+# through the same resolution as the git config mounts, so that a symlink is
+# mounted as whatever it points at, while the target keeps the path as given.
+#
+# A directory is mounted as a single directory rather than expanded entry by
+# entry the way collect_git_config does it. That expansion exists to keep
+# stow style symlink farms usable, and applying it here would turn a mount of
+# a pseudo filesystem such as /sys/fs/selinux into hundreds of mounts of its
+# individual attribute files.
+#
+# Options are passed through untouched, which matters for sources that cannot
+# be relabelled: selinuxfs rejects the chcon behind z, so mounting it needs a
+# bare ro rather than the default.
+collect_mounts() {
+    local spec from to options extra
+
+    for spec in "${MOUNTS[@]}"; do
+        IFS=: read -r from to options extra <<< "$spec"
+
+        if [[ -n "$extra" ]]; then
+            echo "Skipping ${spec}: expected <from>:<to>[:<options>]" >&2
+            continue
+        fi
+        if [[ -z "$from" ]]; then
+            echo "Skipping ${spec}: no source path" >&2
+            continue
+        fi
+
+        # a lone source is mounted at the same path inside the container
+        if [[ -z "$to" ]]; then
+            if ! to=$(resolve_host_path "$from"); then
+                echo "Skipping ${spec}: unresolvable source ${from}" >&2
+                continue
+            fi
+        fi
+
+        # podman only accepts absolute paths as a mount target
+        if [[ "$to" != /* ]]; then
+            echo "Skipping ${spec}: target ${to} is not absolute" >&2
+            continue
+        fi
+
+        add_mount "$from" "$to" "${options:-z}"
+    done
+}
+
 create_ssh_sock() {
     # Creates UNIX socket to mount into container that forwards traffic to SSH agent
     socat -d -d "UNIX-LISTEN:$RUNTIME_DIR/agent.sock,mode=777,fork" "UNIX-CLIENT:$SSH_AUTH_SOCK" &
@@ -247,6 +304,7 @@ run_claude() {
         -v "$DIR:$DIR:z" \
         -v "$HOME/.claude:/root/.claude:z" \
         -v "$HOME/.claude.json:/root/.claude.json:z" \
+        -v "$HOME/.ssh/known_hosts:/etc/ssh/ssh_known_hosts:ro,z" \
         -v "$RUNTIME_DIR/agent.sock:/root/.ssh/agent.sock:z" \
         -e "SSH_AUTH_SOCK=/root/.ssh/agent.sock" \
         "${MOUNT_ARGS[@]}" \
@@ -256,6 +314,7 @@ run_claude() {
 main() {
     ensure_locations
     collect_git_config
+    collect_mounts
     create_ssh_sock
     run_claude
 }
