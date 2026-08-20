@@ -290,10 +290,6 @@ ensure_selinux_policy() {
     # If SELinux is not active/enforcing or semodule/sesearch are unavailable, nothing to do
     command -v selinuxenabled > /dev/null 2>&1 && selinuxenabled || return 0
 
-    local module_file="${SCRIPT_DIR}/../container_ssh_forward.cil"
-    [[ -f "$module_file" ]] || module_file="${SCRIPT_DIR}/container_ssh_forward.cil"
-    [[ -f "$module_file" ]] || return 0
-
     # Check if the policy rule is already active
     if command -v sesearch > /dev/null 2>&1; then
         if sesearch -A -s container_t -t unconfined_t -c unix_stream_socket -p connectto 2>/dev/null | grep -q connectto; then
@@ -305,17 +301,32 @@ ensure_selinux_policy() {
         fi
     fi
 
+    # Write CIL module to a securely created temporary directory inside RUNTIME_DIR
+    local tmp_dir
+    tmp_dir=$(mktemp -d "${RUNTIME_DIR}/selinux-policy.XXXXXX")
+    local module_file="${tmp_dir}/container_ssh_forward.cil"
+
+    cat << 'EOF' > "$module_file"
+(allow container_t unconfined_t (unix_stream_socket (connectto)))
+EOF
+
     # Policy rule is missing; install module using sudo or doas if available
     echo "Installing required SELinux policy module for SSH agent forwarding..." >&2
+    local install_err=0
     if [[ $EUID -eq 0 ]]; then
-        semodule -i "$module_file"
+        semodule -i "$module_file" || install_err=$?
     elif command -v sudo > /dev/null 2>&1; then
-        sudo semodule -i "$module_file"
+        sudo semodule -i "$module_file" || install_err=$?
     elif command -v doas > /dev/null 2>&1; then
-        doas semodule -i "$module_file"
+        doas semodule -i "$module_file" || install_err=$?
     else
-        echo "Warning: Unable to install SELinux policy module (sudo/doas not found). Please run 'sudo semodule -i $module_file' manually." >&2
+        echo "Warning: Unable to install SELinux policy module (sudo/doas not found). Please run:
+    echo '(allow container_t unconfined_t (unix_stream_socket (connectto)))' | sudo semodule -i /dev/stdin" >&2
+        install_err=1
     fi
+
+    rm -rf "$tmp_dir"
+    return $install_err
 }
 
 create_ssh_sock() {

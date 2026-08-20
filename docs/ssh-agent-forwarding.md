@@ -84,13 +84,13 @@ Therefore, **Option 1 (SELinux Policy Module)** is the correct and necessary sol
 
 ## Recommended Fix (Option 1)
 
-A CIL policy module `container_ssh_forward.cil` is provided in the repository root:
+A CIL policy module `container_ssh_forward.cil` is embedded directly into `scripts/run-claude` (and also documented here):
 
 ```cil
 (allow container_t unconfined_t (unix_stream_socket (connectto)))
 ```
 
-The launcher script `scripts/run-claude` automatically checks whether SELinux is active and if this rule is missing via `sesearch` / `semodule`. If the policy is not loaded, it prompts for installation (`sudo semodule -i ...`) on launch. It can also be loaded manually on the host:
+The launcher script `scripts/run-claude` automatically checks whether SELinux is active and if this rule is missing via `sesearch` / `semodule`. If the policy is not loaded, it securely generates a temporary CIL definition and installs it (`sudo semodule -i ...`) on launch. It can also be loaded manually on the host:
 ```bash
 sudo semodule -i container_ssh_forward.cil
 ```
