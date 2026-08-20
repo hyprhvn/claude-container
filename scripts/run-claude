@@ -333,7 +333,7 @@ create_ssh_sock() {
     ensure_selinux_policy
 
     # Creates UNIX socket to mount into container that forwards traffic to SSH agent.
-    socat -d -d "UNIX-LISTEN:$RUNTIME_DIR/agent.sock,mode=777,fork" "UNIX-CLIENT:$SSH_AUTH_SOCK" &
+    socat -d -d "UNIX-LISTEN:$RUNTIME_DIR/agent.sock,mode=777,fork" "UNIX-CLIENT:$SSH_AUTH_SOCK" 2>&1 /dev/null &
     SOCAT_PID=$!
 
     # wait for socat to successfully create the socket
