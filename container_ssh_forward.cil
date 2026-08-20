@@ -1,1 +1,0 @@
-(allow container_t unconfined_t (unix_stream_socket (connectto)))
