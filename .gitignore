@@ -1,0 +1,11 @@
+# Local, environment-specific artifacts that must never be committed.
+
+# podman inspect dump: leaks host paths, PIDs, timestamps; goes stale instantly.
+container.json
+
+# Stray debug redirect (host `ssh-add -l` output) and audit logs.
+out.txt
+denials.txt
+
+# Personal Claude Code settings; project settings live in .claude/settings.json.
+.claude/settings.local.json
