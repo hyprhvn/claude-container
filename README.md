@@ -18,36 +18,32 @@ podman push docker.io/hyprhvn/claude-container:full
 
 ## Use
 
-Run the container with the project directory mounted to the workspace and set the work dir:
+The recommended way to run Claude in the container is using the `scripts/run-claude` launcher script, which manages SSH agent forwarding, git config propagation, XDG directory structures, and workspace mounting automatically:
+
+```bash
+# Run in the current directory:
+./scripts/run-claude
+
+# Or run in a specific project directory:
+./scripts/run-claude /path/to/project
+
+# Mount additional paths if needed:
+./scripts/run-claude -m /host/path:/container/path
+```
+
+You can also copy or symlink `scripts/run-claude` into your `~/.local/bin/` to make `run-claude` available in your `$PATH`.
+
+### Manual Podman Command
+
+Alternatively, run the container directly with `podman`:
 
 ```bash
 podman run -it --rm \
     -w "$PWD" \
     -v "$PWD:$PWD:z" \
-    -v "$HOME/.claude:$HOME/.claude:z" \
-    -v "$HOME/.claude.json:$HOME/.claude.json:z" \
-    -v "$HOME/.dotfiles:$HOME/.dotfiles:ro,z" \
-    -v "$HOME/.config/git:$HOME/.config/git:ro,z" \
-    -e "PATH=/sbin:/bin:$PATH" \
+    -v "$HOME/.claude:/root/.claude:z" \
+    -v "$HOME/.claude.json:/root/.claude.json:z" \
     -v "$HOME/.ssh/known_hosts:/etc/ssh/ssh_known_hosts:ro,z" \
-    -v "$HOME/.ssh/config:/etc/ssh/ssh_config:ro,z" \
-    -v "$HOME/.ssh/config.d/git.config:/etc/ssh/config.d/git.config:ro,z" \
-    -v "$HOME/.ssh/id_github:/root/.ssh/id_github:ro,z" \
-    -v "$HOME/.ssh/id_gitlab:/root/.ssh/id_gitlab:ro,z" \
-    -v "$HOME/.bashrc:$HOME/.bashrc:ro,z" \
-    -v "$HOME/.bashrc.d:$HOME/.bashrc.d:ro,z" \
-    -v "$HOME/.bash_profile:$HOME/.bash_profile:ro,z" \
-    -v "$HOME/.bash_profile.d:$HOME/.bash_profile.d:ro,z" \
-    -v "$HOME/.local/bin:$HOME/.local/bin:ro,z" \
-    -v "$HOME/.local/opt:$HOME/.local/opt:ro,z" \
+    -v "$HOME/.config/git:/root/.config/git:ro,z" \
   docker.io/hyprhvn/claude-container:full
 ```
-
-> [!NOTE]
->
-> It might be a good idea to also mount other directories, e.g.:
->
-> - `~/.ssh`
-> - `~/.config/git`
->
-> Probably best to mount these read-only though.

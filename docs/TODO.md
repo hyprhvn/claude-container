@@ -34,5 +34,10 @@
 
 ## Resolution Options Summary
 
-1. **Option 1 (SELinux Policy Module):** Install `container_ssh_forward.cil` allowing `container_t unconfined_t:unix_stream_socket connectto;` (Requires single host `sudo semodule -i`).
-2. **Option 2 (runcon domain transition):** Run `socat` under `container_t` domain at launch (no `sudo` required; testing in progress).
+1. **Option 1 (SELinux Policy Module) — Implemented & Active:**
+   - Policy module: `(allow container_t unconfined_t (unix_stream_socket (connectto)))`
+   - Embedded directly into `scripts/run-claude`, which auto-detects and installs it if missing.
+   - Verified inside container with `ssh-add -l`.
+
+2. **Option 2 (runcon domain transition) — Infeasible & Ruled Out:**
+   - Evaluated running `socat` under `container_t` directly on the host, but blocked by host directory access and upstream keyring connection restrictions. Option 1 was adopted instead.
