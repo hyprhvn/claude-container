@@ -330,31 +330,40 @@ EOF
 }
 
 create_ssh_sock() {
-	ensure_selinux_policy
+	# only run this if an SSH_AUTH_SOCK is defined
+	if [[ -n "${SSH_AUTH_SOCK:-}" ]]; then
+		ensure_selinux_policy
 
-	# Creates UNIX socket to mount into container that forwards traffic to SSH agent.
-	socat "UNIX-LISTEN:$RUNTIME_DIR/agent.sock,mode=777,fork" "UNIX-CLIENT:$SSH_AUTH_SOCK" &>/dev/null &
-	SOCAT_PID=$!
+		# Creates UNIX socket to mount into container that forwards traffic to SSH agent.
+		socat "UNIX-LISTEN:$RUNTIME_DIR/agent.sock,mode=777,fork" "UNIX-CLIENT:$SSH_AUTH_SOCK" &>/dev/null &
+		SOCAT_PID=$!
 
-	# wait for socat to successfully create the socket
-	while [[ ! -S "$RUNTIME_DIR/agent.sock" ]]; do
-		sleep 0.1
-	done
+		# wait for socat to successfully create the socket
+		while [[ ! -S "$RUNTIME_DIR/agent.sock" ]]; do
+			sleep 0.1
+		done
 
-	# relabel so the container (container_t) can access the socket file. The :Z mount
-	# option does not relabel a live unix socket, so do it here explicitly.
-	chcon -t container_file_t "$RUNTIME_DIR/agent.sock" 2>/dev/null || true
+		# relabel so the container (container_t) can access the socket file. The :Z mount
+		# option does not relabel a live unix socket, so do it here explicitly.
+		chcon -t container_file_t "$RUNTIME_DIR/agent.sock" 2>/dev/null || true
+	fi
 }
 
 run_claude() {
+	SSH_ARGS=()
+	# only add ssh args if an SSH_AUTH_SOCK is defined
+	if [[ -n "${SSH_AUTH_SOCK:-}" ]]; then
+		SSH_ARGS+=(-v "$HOME/.ssh/known_hosts:/etc/ssh/ssh_known_hosts:ro,z")
+		SSH_ARGS+=(-v "$RUNTIME_DIR/agent.sock:/root/.ssh/agent.sock:z")
+		SSH_ARGS+=(-e "SSH_AUTH_SOCK=/root/.ssh/agent.sock")
+	fi
+
 	podman run -it --rm \
 		-w "$DIR" \
 		-v "$DIR:$DIR:z" \
 		-v "$HOME/.claude:/root/.claude:z" \
 		-v "$HOME/.claude.json:/root/.claude.json:z" \
-		-v "$HOME/.ssh/known_hosts:/etc/ssh/ssh_known_hosts:ro,z" \
-		-v "$RUNTIME_DIR/agent.sock:/root/.ssh/agent.sock:z" \
-		-e "SSH_AUTH_SOCK=/root/.ssh/agent.sock" \
+		"${SSH_ARGS[@]}" \
 		"${MOUNT_ARGS[@]}" \
 		docker.io/hyprhvn/claude-container:full
 }
