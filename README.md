@@ -1,6 +1,11 @@
 # claude-container
 
-A containerized version of claude-code.
+A containerized version of claude-code with rootless Podman, strict SELinux compatibility, SSH agent forwarding, modular XDG directory layout, and external skills support.
+
+> [!important]
+>
+> This project uses Podman and strict SELinux confinement (`:z` labels).
+> Because the user's `$HOME` root directory cannot be relabeled as `container_t`, running directly inside `$HOME` as the workspace target (`DIR`) is prohibited.
 
 ## Build
 
@@ -17,50 +22,81 @@ podman build -f Containerfiles/Full -t docker.io/hyprhvn/claude-container:full
 podman push docker.io/hyprhvn/claude-container:full
 ```
 
-## Use
+## Directory Architecture & XDG Specification
 
-The recommended way to run Claude in the container is using the `claude-container` script, which manages SSH agent forwarding, git config propagation, XDG directory structures, and workspace mounting automatically:
+Claude Code files and state are partitioned according to the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir/latest).
+Default locations can be overwritten using the `XDG_` env vars from the spec.
+
+The directories are mounted directly to the locations Claude expects in the container:
+
+| Category    | Default Host Path                 | Contents                                                                                                                                 |
+| ----------- | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| **Config**  | `~/.config/claude-container`      | `CLAUDE.md`, `settings.json`, `rules/`, `themes/`, `output-styles/`, `agents/`, `workflows/`, `commands/`, `skills/`, `keybindings.json` |
+| **State**   | `~/.local/state/claude-container` | `claude.json` (OAuth/trust/preferences), `agent-memory/`                                                                                 |
+| **Cache**   | `~/.cache/claude-container`       | `projects/` (Session history & auto-memory indices/topics)                                                                               |
+| **Data**    | `~/.local/share/claude-container` | External & imported skills data (`skills/`)                                                                                              |
+| **Runtime** | `/run/user/$UID/claude-container` | SSH socket forwarder (`/root/.ssh/agent.sock` -- `mode=0700`)                                                                            |
+
+## Setup & Migration
+
+### Migrating Existing `~/.claude` Configuration
+
+If you have an existing legacy `~/.claude` directory or `~/.claude.json` file, run the migration script:
+
+```bash
+# Preview what will be moved/created without modifying files
+./scripts/migrate-from-home --dry-run
+
+# Run migration (creates an automatic timestamped backup in ~/.claude.backup.<timestamp>)
+./scripts/migrate-from-home
+
+# Or copy instead of moving
+./scripts/migrate-from-home --copy
+```
+
+If starting fresh without existing configuration, running `scripts/migrate-from-home` or launching `scripts/claude-container` automatically scaffolds the minimal required directory structure and a valid initial `claude.json`.
+
+## Usage
+
+Run Claude Code in the current workspace:
 
 ```bash
 # Run in the current directory:
-./scripts/run-claude
+./scripts/claude-container
 
-# Or run in a specific project directory:
-./scripts/run-claude /path/to/project
+# Run in a specific project directory:
+./scripts/claude-container /path/to/project
 
-# Mount additional paths if needed:
-./scripts/run-claude -m /host/path:/container/path
+# Mount additional custom paths:
+./scripts/claude-container -m /host/path:/container/path
 ```
+
+### External Skills Management
+
+You can import skills from external repositories or private folders without modifying submodules:
+
+1. **Config File (`skills.conf`):**
+   Add directory paths (one per line) to `${XDG_CONFIG_HOME:-~/.config}/claude-container/skills.conf`:
+
+   ```text
+   # ~/.config/claude-container/skills.conf
+   /home/user/src/my-private-skills
+   ```
+
+2. **Environment Variable:**
+   Set `CLAUDE_SKILLS_DIR` to colon-separated paths:
+
+   ```bash
+   export CLAUDE_SKILLS_DIR="/path/to/skills-repo:/another/path/skills"
+   ```
+
+3. **Command Line Flag:**
+   Pass one or more `--skills-dir` arguments:
+
+   ```bash
+   ./scripts/claude-container --skills-dir /path/to/skills-repo
+   ```
 
 ## Install
 
-Put the `scripts/claude-container` launcher script in a directory on your `$PATH` and run the containerized agent with `run-claude`.
-You can display the help messge with `run-claude -h`.
-
-When running without arguments, the working directory is mounted into the container.
-
-> [!important]
->
-> This script uses Podman and strict SELinux confinement.
-> Because the home directory cannot be relabeled as `container_t`, running the script form there will fail.
-
-Additional directories can be made available via `--mount` flags.
-
-### Manual Podman Command
-
-Alternatively, run the container directly with `podman`:
-
-```bash
-podman run -it --rm \
-    -w "$PWD" \
-    -v "$PWD:$PWD:z" \
-    -v "$HOME/.claude:/root/.claude:z" \
-    -v "$HOME/.claude.json:/root/.claude.json:z" \
-    -v "$HOME/.ssh/known_hosts:/etc/ssh/ssh_known_hosts:ro,z" \
-    -v "$HOME/.config/git:/root/.config/git:ro,z" \
-  docker.io/hyprhvn/claude-container:full
-```
-
-## Prerequisites
-
-You need a `~/.claude` directory and a `~/.claude.json` file.
+Place `scripts/claude-container` and `scripts/migrate-from-home` in a directory on your `$PATH` (e.g. `~/.local/bin/`).
