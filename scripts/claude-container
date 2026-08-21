@@ -16,18 +16,15 @@ cleanup() {
 
 	# check if SOCAT_PID exists before killing
 	if [[ -n "${SOCAT_PID:-}" ]]; then
-		kill $SOCAT_PID 2>/dev/null
+		kill "$SOCAT_PID" 2>/dev/null
 	fi
 	# clean up runtime dir
-	rm -r "$RUNTIME_DIR"
+	rm -rf "$RUNTIME_DIR"
 
 	$VERBOSE && echo "Bye!"
 
 	exit $ret_code
 }
-
-# get the directory of this script, as per https://stackoverflow.com/a/246128
-SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 
 # set xdg base dir locations
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/claude-container"
@@ -39,6 +36,7 @@ RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$UID}/claude-container"
 # set defaults for flag arguments
 VERBOSE=false # TODO use this: https://stackoverflow.com/a/8756552/5994623
 MOUNTS=()
+EXTRA_SKILLS_DIRS=()
 
 # -v arguments assembled at runtime by add_mount and add_dir_mounts
 MOUNT_ARGS=()
@@ -48,9 +46,10 @@ DIR=
 
 # define help message
 usage() {
-	local prog=$(basename "${0}")
-	local indent_length="${#prog}"
-	local indent=$(printf "%${indent_length}s")
+	local prog indent_length indent
+	prog=$(basename "${0}")
+	indent_length="${#prog}"
+	indent=$(printf "%${indent_length}s")
 
 	# ensure that lines with the prog or indent don't exceed 80 characters!
 	cat <<EOF
@@ -59,7 +58,7 @@ NAME
 
 SYNOPSIS
     $prog [-h | --help] [-v | --verbose] [-q | --quiet]
-    $indent [-m | --mount MOUNT]... [DIR]
+    $indent [-m | --mount MOUNT]... [--skills-dir DIR]... [DIR]
 
 DESCRIPTION
 
@@ -69,21 +68,25 @@ OPTIONS
 
     Basic Options
 
-        -h, --help     display this help message and exit
-        -v, --verbose  print more output (default)
-        -q, --quiet    print less output (buggy, do not use!)
+        -h, --help        display this help message and exit
+        -v, --verbose     print more output (default)
+        -q, --quiet       print less output (buggy, do not use!)
 
     Advanced Options
 
-        -m, --mount    mount an additional host path into the container, in
-                       the podman -v syntax, <from>:<to>[:<options>]. May be
-                       given more than once. <to> defaults to the resolved
-                       <from>, <options> defaults to z. Sources are resolved
-                       through symlinks, targets are used as given.
+        -m, --mount       mount an additional host path into the container, in
+                          the podman -v syntax, <from>:<to>[:<options>]. May be
+                          given more than once. <to> defaults to the resolved
+                          <from>, <options> defaults to z. Sources are resolved
+                          through symlinks, targets are used as given.
+
+        --skills-dir DIR  mount additional skills from the specified directory
+                          into /root/.claude/skills. May be specified multiple
+                          times.
 
     Positional Arguments
 
-        DIR            the directory in which claude should work (default is \$PWD)
+        DIR               the directory in which claude should work (default is \$PWD)
 
 EOF
 }
@@ -114,6 +117,15 @@ get_opts() {
 			shift
 			MOUNTS+=("${1}")
 			;;
+		--skills-dir)
+			if [[ $# -lt 2 ]]; then
+				echo -e "Missing argument for ${argument}\n"
+				usage
+				exit 2
+			fi
+			shift
+			EXTRA_SKILLS_DIRS+=("${1}")
+			;;
 		-*) # fail on unrecognized flags
 			echo -e "Unknown flag ${argument}\n"
 			usage
@@ -142,13 +154,33 @@ get_opts() {
 	fi
 }
 
-# ensure existence of xdg base dirs
+# ensure existence of xdg base dirs and minimal scaffold
 ensure_locations() {
 	mkdir -p "$CONFIG_DIR"
-	mkdir -p "$CACHE_DIR"
-	mkdir -p "$STATE_DIR"
+	mkdir -p "$CONFIG_DIR/rules"
+	mkdir -p "$CONFIG_DIR/skills"
+	mkdir -p "$CONFIG_DIR/themes"
+	mkdir -p "$CONFIG_DIR/output-styles"
+	mkdir -p "$CONFIG_DIR/agents"
+	mkdir -p "$CONFIG_DIR/workflows"
+	mkdir -p "$CONFIG_DIR/commands"
+
 	mkdir -p "$DATA_DIR"
+	mkdir -p "$DATA_DIR/skills"
+
+	mkdir -p "$STATE_DIR"
+	mkdir -p "$STATE_DIR/agent-memory"
+
+	mkdir -p "$CACHE_DIR"
+	mkdir -p "$CACHE_DIR/projects"
+
 	mkdir -p "$RUNTIME_DIR"
+	chmod 0700 "$RUNTIME_DIR" 2>/dev/null || true
+
+	# Ensure minimal claude.json exists so podman can bind-mount it as a file
+	if [[ ! -f "$STATE_DIR/claude.json" ]]; then
+		echo "{}" >"$STATE_DIR/claude.json"
+	fi
 }
 
 # Print the fully resolved location of a host path, or fail if there is none
@@ -236,6 +268,96 @@ collect_git_config() {
 	if [[ ${#MOUNT_ARGS[@]} -eq $before ]]; then
 		echo "Warning: no git config found, commits will lack an author identity" >&2
 	fi
+}
+
+# Collect modular XDG-based mounts for Claude Code
+collect_claude_xdg_mounts() {
+	# 1. State: ~/.claude.json and agent-memory
+	add_mount "$STATE_DIR/claude.json" "/root/.claude.json" "rw,z"
+	add_mount "$STATE_DIR/agent-memory" "/root/.claude/agent-memory" "rw,z"
+
+	# 2. Cache: project session auto-memory & history
+	add_mount "$CACHE_DIR/projects" "/root/.claude/projects" "rw,z"
+
+	# 3. Config: user instructions, settings, rules, themes, workflows, etc.
+	local config_files=(
+		"CLAUDE.md"
+		"settings.json"
+		"settings.local.json"
+		"keybindings.json"
+	)
+	for f in "${config_files[@]}"; do
+		if [[ -f "$CONFIG_DIR/$f" ]]; then
+			add_mount "$CONFIG_DIR/$f" "/root/.claude/$f" "rw,z"
+		fi
+	done
+
+	local config_dirs=(
+		"rules"
+		"themes"
+		"output-styles"
+		"agents"
+		"workflows"
+		"commands"
+	)
+	for d in "${config_dirs[@]}"; do
+		if [[ -d "$CONFIG_DIR/$d" ]]; then
+			add_mount "$CONFIG_DIR/$d" "/root/.claude/$d" "ro,z"
+		fi
+	done
+
+	# User global skills (CONFIG_DIR/skills) mounted to /root/.claude/skills
+	add_mount "$CONFIG_DIR/skills" "/root/.claude/skills" "rw,z"
+}
+
+# Collect external skills from configuration file, env vars, and CLI arguments
+collect_skills_mounts() {
+	local skill_sources=()
+
+	# 1. Load from skills.conf if present in CONFIG_DIR
+	if [[ -f "$CONFIG_DIR/skills.conf" ]]; then
+		while IFS= read -r line || [[ -n "$line" ]]; do
+			# Strip comments and empty lines
+			line="${line%%#*}"
+			line="$(echo "$line" | xargs)" # trim whitespace
+			[[ -z "$line" ]] && continue
+			skill_sources+=("$line")
+		done <"$CONFIG_DIR/skills.conf"
+	fi
+
+	# 2. Add CLAUDE_SKILLS_DIR from environment if defined
+	if [[ -n "${CLAUDE_SKILLS_DIR:-}" ]]; then
+		IFS=: read -ra env_dirs <<<"$CLAUDE_SKILLS_DIR"
+		skill_sources+=("${env_dirs[@]}")
+	fi
+
+	# 3. Add command-line specified skills directories
+	skill_sources+=("${EXTRA_SKILLS_DIRS[@]}")
+
+	# Mount individual skills from each source directory
+	local src resolved_src skill_dir skill_name
+	for src in "${skill_sources[@]}"; do
+		# Expand ~ if present
+		src="${src/#\~/$HOME}"
+		resolved_src=$(resolve_host_path "$src") || {
+			echo "Skipping skill directory ${src}: path does not exist" >&2
+			continue
+		}
+		[[ -d "$resolved_src" ]] || continue
+
+		# If the directory itself contains a SKILL.md, it is a single skill
+		if [[ -f "$resolved_src/SKILL.md" ]]; then
+			skill_name=$(basename "$resolved_src")
+			add_mount "$resolved_src" "/root/.claude/skills/$skill_name" "ro,z"
+		else
+			# Otherwise, inspect subdirectories for SKILL.md or bundle directories
+			for skill_dir in "$resolved_src"/*; do
+				[[ -d "$skill_dir" ]] || continue
+				skill_name=$(basename "$skill_dir")
+				add_mount "$skill_dir" "/root/.claude/skills/$skill_name" "ro,z"
+			done
+		fi
+	done
 }
 
 # Collect the mounts requested on the command line with -m/--mount
@@ -361,8 +483,6 @@ run_claude() {
 	podman run -it --rm \
 		-w "$DIR" \
 		-v "$DIR:$DIR:z" \
-		-v "$HOME/.claude:/root/.claude:z" \
-		-v "$HOME/.claude.json:/root/.claude.json:z" \
 		"${SSH_ARGS[@]}" \
 		"${MOUNT_ARGS[@]}" \
 		docker.io/hyprhvn/claude-container:full
@@ -371,6 +491,8 @@ run_claude() {
 main() {
 	ensure_locations
 	collect_git_config
+	collect_claude_xdg_mounts
+	collect_skills_mounts
 	collect_mounts
 	create_ssh_sock
 	run_claude
