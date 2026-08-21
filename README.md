@@ -4,9 +4,10 @@ A containerized version of claude-code.
 
 ## Build
 
-Build and push this with:
+Build and push the OCI images with:
 
 ```bash
+# log in to docker hub
 podman login -u hyprhvn docker.io
 # build the base container
 podman build -f Containerfiles/Base -t docker.io/hyprhvn/claude-container:base
@@ -18,7 +19,7 @@ podman push docker.io/hyprhvn/claude-container:full
 
 ## Use
 
-The recommended way to run Claude in the container is using the `scripts/run-claude` launcher script, which manages SSH agent forwarding, git config propagation, XDG directory structures, and workspace mounting automatically:
+The recommended way to run Claude in the container is using the `claude-container` script, which manages SSH agent forwarding, git config propagation, XDG directory structures, and workspace mounting automatically:
 
 ```bash
 # Run in the current directory:
@@ -31,7 +32,19 @@ The recommended way to run Claude in the container is using the `scripts/run-cla
 ./scripts/run-claude -m /host/path:/container/path
 ```
 
-You can also copy or symlink `scripts/run-claude` into your `~/.local/bin/` to make `run-claude` available in your `$PATH`.
+## Install
+
+Put the `scripts/claude-container` launcher script in a directory on your `$PATH` and run the containerized agent with `run-claude`.
+You can display the help messge with `run-claude -h`.
+
+When running without arguments, the working directory is mounted into the container.
+
+> [!important]
+>
+> This script uses Podman and strict SELinux confinement.
+> Because the home directory cannot be relabeled as `container_t`, running the script form there will fail.
+
+Additional directories can be made available via `--mount` flags.
 
 ### Manual Podman Command
 
@@ -47,3 +60,7 @@ podman run -it --rm \
     -v "$HOME/.config/git:/root/.config/git:ro,z" \
   docker.io/hyprhvn/claude-container:full
 ```
+
+## Prerequisites
+
+You need a `~/.claude` directory and a `~/.claude.json` file.
