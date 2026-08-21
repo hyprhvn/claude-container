@@ -33,6 +33,11 @@ External skills are discoverable and mounted from:
 
 ## Documentation & Diagnostics
 
-- Architectural design and specifications live in `PLANNING.md`.
-- Documentation of SSH forwarding live in `docs/ssh-agent-forwarding.md`.
+- Detailed technical documentation is located in `docs/`:
+  - `docs/architecture.md`: Overall containerization architecture and security model.
+  - `docs/xdg-storage.md`: Complete XDG storage layout and mount mappings.
+  - `docs/ssh-agent-forwarding.md`: SSH socket proxying and SELinux CIL policy.
+  - `docs/skills.md`: External skills management and loading logic.
+  - `docs/migration.md`: Legacy setup migration and fresh initialization.
+  - `docs/mounting.md`: Host mounts, custom `-m` mounts, and Git forwarding.
 - `debug.sh` provides host-side SELinux and socket diagnostics.

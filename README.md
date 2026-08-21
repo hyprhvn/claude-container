@@ -7,6 +7,17 @@ A containerized version of claude-code with rootless Podman, strict SELinux comp
 > This project uses Podman and strict SELinux confinement (`:z` labels).
 > Because the user's `$HOME` root directory cannot be relabeled as `container_t`, running directly inside `$HOME` as the workspace target (`DIR`) is prohibited.
 
+## Documentation
+
+Comprehensive documentation for all subsystems is available in the [`docs/`](docs/README.md) directory:
+
+- [Architecture & Containerization Overview](docs/architecture.md)
+- [XDG Storage Specification & Directory Layout](docs/xdg-storage.md)
+- [SSH Agent Forwarding & SELinux Policy](docs/ssh-agent-forwarding.md)
+- [External Skills Management](docs/skills.md)
+- [Migration & Initialization Guide](docs/migration.md)
+- [Host Mounts & Git Configuration Forwarding](docs/mounting.md)
+
 ## Build
 
 Build and push the OCI images with:

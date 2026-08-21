@@ -1,111 +1,112 @@
-# SSH agent forwarding into the container
+# SSH Agent Forwarding & SELinux Configuration
 
-## Symptom
+This document explains how host SSH agent forwarding is accomplished in `claude-container`, the SELinux permission challenges encountered with Unix domain stream sockets, and the Type Enforcement (CIL) policy solution.
 
-Inside the container, `ssh-add -l` fails:
+---
+
+## 1. Overview & Architecture
+
+When authenticating against remote Git repositories (e.g., GitHub, GitLab) via SSH inside the container, Claude Code needs access to the host's active SSH agent keys (such as GNOME Keyring, `ssh-agent`, or 1Password).
+
+The forwarding pipeline consists of:
+1. **Host Socket Bridge (`socat`):** `scripts/claude-container` starts a background `socat` process forwarding connections from a temporary Unix socket to the host's `$SSH_AUTH_SOCK`:
+   ```bash
+   socat "UNIX-LISTEN:$RUNTIME_DIR/agent.sock,mode=777,fork" "UNIX-CLIENT:$SSH_AUTH_SOCK" &
+   ```
+2. **SELinux Inode Relabeling:** The temporary socket `/run/user/$UID/claude-container/agent.sock` is relabeled to `container_file_t`:
+   ```bash
+   chcon -t container_file_t "$RUNTIME_DIR/agent.sock"
+   ```
+3. **Container Bind Mount & Environment:** The socket and known hosts file are mounted into the container:
+   - `-v "$HOME/.ssh/known_hosts:/etc/ssh/ssh_known_hosts:ro,z"`
+   - `-v "$RUNTIME_DIR/agent.sock:/root/.ssh/agent.sock:z"`
+   - `-e "SSH_AUTH_SOCK=/root/.ssh/agent.sock"`
+
+---
+
+## 2. The SELinux Socket Peer Mediation Problem
+
+On SELinux-enforcing hosts (such as Fedora, RHEL, or CentOS), connecting to the forwarded socket inside the container initially fails:
 
 ```console
 $ ssh-add -l
 Error connecting to agent: Permission denied
 ```
 
-On the host the same agent lists keys normally (GNOME Keyring owns `SSH_AUTH_SOCK`).
+### Root Cause Analysis
+The failure is caused by **SELinux socket peer mediation**, not file path lookup or network namespaces:
+1. **Filesystem Inode Access:** The container process running under `container_t` can access the filesystem socket inode (`sock_file`) because it was relabeled to `container_file_t`.
+2. **Stream Socket Peer Access:** Connecting to a Unix domain stream socket requires a secondary kernel check:
+   ```
+   allow <client_domain> <server_domain>:unix_stream_socket { connectto };
+   ```
+3. When `socat` runs under the host user session, its process domain is `unconfined_t`. Therefore, when `ssh` or `ssh-add` (running in `container_t` inside Podman) attempts to connect, the kernel evaluates:
+   ```
+   allow container_t unconfined_t:unix_stream_socket { connectto };
+   ```
+4. By default, standard container SELinux policy allows `container_t` to connect only to peer sockets owned by `container_t` or selected system daemons (e.g., `sssd_t`), denying connections to `unconfined_t`.
 
-## Facts (evidence from `out.txt`)
+This results in an AVC denial in `/var/log/audit/audit.log`:
+```
+type=AVC msg=audit(...): avc: denied { connectto } for pid=... comm="ssh-add"
+    path="/run/user/1000/claude-container/agent.sock"
+    scontext=system_u:system_r:container_t:s0:c286,c442
+    tcontext=unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023
+    tclass=unix_stream_socket permissive=0
+```
 
-- SELinux is **Enforcing** on the host.
-- `container_connect_any` is **on**, but it governs TCP/UDP *ports* (`tcp_socket` / `udp_socket`), not Unix-domain sockets. It is irrelevant to the denial below.
-- GNOME Keyring's agent socket is `/run/user/1000/gcr/ssh`, labeled `user_tmp_t`.
-- The socat forwarder socket `/run/user/1000/claude-container/agent.sock` is labeled `container_file_t` via explicit `chcon`.
-- When socat runs as `unconfined_t`, the audit log shows `container_t` processes (`ssh-add`, `ssh`) denied `connectto` on that socket:
-
-  ```
-  avc: denied { connectto } ...
-      scontext=system_u:system_r:container_t:s0:c286,c442
-      tcontext=unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023
-      tclass=unix_stream_socket
-  ```
-
-## Root cause
-
-The blocker is **SELinux socket peer mediation**, not path lookup or network namespaces.
-
-- A pathname (filesystem-bound) Unix socket is reached through VFS path lookup. The container reaches `/root/.ssh/agent.sock` via the bind mount.
-- While `chcon -t container_file_t` successfully changes the socket inode's filesystem label (`sock_file`), Unix domain stream sockets require a second SELinux check: **`unix_stream_socket { connectto }`**.
-- Under Linux SELinux policy, `connectto` is evaluated between the client domain (`container_t`) and the **server socket's creator / peer process context** (`unconfined_t` when socat runs directly in the host user session).
-- `container_t` policy allows connecting only to peer sockets in `container_t` (and specific system daemons), not `unconfined_t`.
+> **Note on `container_connect_any`:** The SELinux boolean `container_connect_any` only governs network TCP/UDP sockets (`tcp_socket` / `udp_socket`). It has no effect on Unix domain sockets (`unix_stream_socket`).
 
 ---
 
-## Resolution Strategies
+## 3. Evaluated Solutions & Why Option 1 Was Chosen
 
-### Option 1: SELinux Policy Module (`container_ssh_forward`)
+### Option 2 (Ruled Out): Transitioning `socat` to `container_t` (`runcon`)
+Running `socat` on the host in `container_t` was evaluated and rejected:
+- `socat` failed to bind to `$RUNTIME_DIR` (`user_tmp_t`), returning `bind(): Permission denied`.
+- Even if `$RUNTIME_DIR` was relabeled, `socat` in `container_t` was denied connecting upstream to GNOME Keyring (`user_tmp_t:unix_stream_socket`).
 
-Install a targeted local SELinux Type Enforcement (TE) policy module granting container processes permission to connect to `unconfined_t` stream sockets.
+### Option 1 (Adopted): Targeted CIL Policy Module
+The cleanest, most robust solution is to install a minimal Common Intermediate Language (CIL) SELinux policy module granting `container_t` the `connectto` permission on `unconfined_t` stream sockets.
 
-**Policy definition (`container_ssh_forward.te`):**
-```te
-module container_ssh_forward 1.0;
-
-require {
-    type container_t;
-    type unconfined_t;
-    class unix_stream_socket connectto;
-}
-
-# Allow container processes to connect to stream sockets created by unconfined host processes
-allow container_t unconfined_t:unix_stream_socket connectto;
-```
-
-**CIL syntax (`container_ssh_forward.cil`):**
+**CIL Policy Definition (`container_ssh_forward.cil`):**
 ```cil
 (allow container_t unconfined_t (unix_stream_socket (connectto)))
 ```
 
-**Installation (requires host sudo once):**
-```bash
-sudo semodule -i container_ssh_forward.cil
-```
+---
 
-- **Pros:** Cleanest architecture. Forwarder runs simply on host; no domain transition or privilege elevation in the launcher script; preserves container isolation.
-- **Cons:** Requires `sudo` on host once to load the policy module.
+## 4. Automated Policy Installation in `scripts/claude-container`
+
+`scripts/claude-container` includes `ensure_selinux_policy()` which automates this check on startup:
+
+1. Tests if SELinux is active via `selinuxenabled`.
+2. Uses `sesearch` or `semodule` to verify if `(allow container_t unconfined_t (unix_stream_socket (connectto)))` is already loaded.
+3. If missing, creates a temporary CIL file inside `$RUNTIME_DIR` and installs it using `sudo` or `doas`:
+   ```bash
+   semodule -i "$module_file"
+   ```
+
+### Manual Installation
+If running on a system without passwordless sudo, the module can be installed manually once:
+
+```bash
+echo '(allow container_t unconfined_t (unix_stream_socket (connectto)))' | sudo semodule -i /dev/stdin
+```
 
 ---
 
-### Option 2: Domain Transition for Forwarder Process (`runcon`) — *Evaluated & Infeasible*
+## 5. Verification & Diagnostics
 
-Attempting to run `socat` on the host within `container_t` via `runcon` fails because:
-1. `socat` cannot create/bind the socket in `$XDG_RUNTIME_DIR/claude-container` (`user_tmp_t` dir) due to SELinux denying `container_t` write permission on host `user_tmp_t` directories (`bind(): Permission denied`).
-2. Even if the directory is relabeled, `socat` in `container_t` would be denied connecting upstream to the GNOME Keyring socket (`user_tmp_t:unix_stream_socket`).
+Use the host diagnostic script `debug.sh` while the container is running to inspect SELinux contexts, socket labels, and policy rules:
 
-Therefore, **Option 1 (SELinux Policy Module)** is the correct and necessary solution.
-
----
-
-## Recommended Fix (Option 1)
-
-A CIL policy module `container_ssh_forward.cil` is embedded directly into `scripts/run-claude` (and also documented here):
-
-```cil
-(allow container_t unconfined_t (unix_stream_socket (connectto)))
-```
-
-The launcher script `scripts/run-claude` automatically checks whether SELinux is active and if this rule is missing via `sesearch` / `semodule`. If the policy is not loaded, it securely generates a temporary CIL definition and installs it (`sudo semodule -i ...`) on launch. It can also be loaded manually on the host:
 ```bash
-sudo semodule -i container_ssh_forward.cil
+./debug.sh
 ```
 
-### Verification & Results
-
-Once loaded, the active SELinux policy allows container domains to connect to host forwarder sockets:
-```
-allow container_t unconfined_t:unix_stream_socket connectto;
-```
-
-Inside the container:
+Inside the container, test SSH agent access:
 ```console
 $ ssh-add -l
-# lists host SSH keys without error or denial
+2048 SHA256:... user@hostname (RSA)
 ```
-All AVC `connectto` denials are resolved.
-
+SSH operations (including `git push` and `git fetch` over SSH) will function without permission errors.
