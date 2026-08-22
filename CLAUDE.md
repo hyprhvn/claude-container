@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 You are an expert systems administrator and dev-ops engineer.
-Your task is to maintain and improve the containerized environment for running Claude Code in rootless Podman, including SSH agent forwarding, SELinux policy compatibility, modular XDG directory mounting, and external skills management.
+Your task is to maintain and improve the containerized environment for running Claude Code in rootless Podman, including SSH agent forwarding, SELinux policy compatibility, modular XDG directory mounting, external skills management, and container testing.
 
 You are root in an Alpine Linux container and can install all the tools you need to run diagnostics.
 
@@ -19,6 +19,11 @@ External skills are discoverable and mounted from:
 2. `CLAUDE_SKILLS_DIR` environment variable
 3. `--skills-dir <DIR>` CLI flag
 
+## CLI Argument Forwarding
+
+- Container arguments are passed via `-C` / `--container-arg <ARG>` (e.g. `--privileged`).
+- Claude arguments are passed following the workspace directory `[DIR] [CLAUDE_ARGS...]` or after `--`.
+
 ## Migration & Initialization
 
 - `scripts/migrate-from-home` handles migrating legacy `~/.claude` and `~/.claude.json` configurations into the modular XDG layout with backup support (`--dry-run`, `--copy`, `--no-backup`).
@@ -31,7 +36,7 @@ External skills are discoverable and mounted from:
 - To allow `container_t` to connect to `unconfined_t:unix_stream_socket`, `scripts/claude-container` checks for and installs the SELinux CIL policy `(allow container_t unconfined_t (unix_stream_socket (connectto)))` if missing.
 - Inside the container, `$SSH_AUTH_SOCK` points to `/root/.ssh/agent.sock`.
 
-## Documentation & Diagnostics
+## Testing & Diagnostics
 
 - Detailed technical documentation is located in `docs/`:
   - `docs/architecture.md`: Overall containerization architecture and security model.
@@ -40,4 +45,6 @@ External skills are discoverable and mounted from:
   - `docs/skills.md`: External skills management and loading logic.
   - `docs/migration.md`: Legacy setup migration and fresh initialization.
   - `docs/mounting.md`: Host mounts, custom `-m` mounts, and Git forwarding.
+  - `docs/testing.md`: Testing with Podman-in-Podman (PinP) and argument passthrough.
+- `tests/test-pinp.sh` runs automated test suites for argument collection and PinP readiness.
 - `debug.sh` provides host-side SELinux and socket diagnostics.

@@ -17,6 +17,7 @@ Comprehensive documentation for all subsystems is available in the [`docs/`](doc
 - [External Skills Management](docs/skills.md)
 - [Migration & Initialization Guide](docs/migration.md)
 - [Host Mounts & Git Configuration Forwarding](docs/mounting.md)
+- [Testing & Podman-in-Podman (PinP)](docs/testing.md)
 
 ## Build
 
@@ -80,6 +81,13 @@ Run Claude Code in the current workspace:
 
 # Mount additional custom paths:
 ./scripts/claude-container -m /host/path:/container/path
+
+# Pass additional container runtime flags:
+./scripts/claude-container -C --privileged -C --device=/dev/fuse /workspace
+
+# Pass arguments directly to claude inside the container:
+./scripts/claude-container /workspace --help
+./scripts/claude-container . -p "explain this codebase"
 ```
 
 ### External Skills Management

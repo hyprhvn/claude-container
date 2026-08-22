@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+#
+# test-pinp.sh - Automated Podman-in-Podman (PinP) & Argument Passthrough Test
+#
+# This script is designed to run either:
+# 1. Directly on a system with Podman installed.
+# 2. Inside a privileged outer container (e.g. alpine:3.20 or quay.io/podman/stable).
+#
+
+set -eEuo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TEST_TMP="$(mktemp -d "/tmp/claude-container-test.XXXXXX")"
+
+cleanup() {
+	rm -rf "$TEST_TMP"
+}
+trap cleanup EXIT
+
+echo "==> Running PinP and CLI Argument Tests in: $TEST_TMP"
+
+# 1. Test CLI Help
+echo "--> Testing --help option..."
+"$REPO_ROOT/scripts/claude-container" --help >/dev/null
+
+# 2. Configure isolated environment
+export XDG_CONFIG_HOME="$TEST_TMP/config"
+export XDG_DATA_HOME="$TEST_TMP/data"
+export XDG_STATE_HOME="$TEST_TMP/state"
+export XDG_CACHE_HOME="$TEST_TMP/cache"
+export XDG_RUNTIME_DIR="$TEST_TMP/run"
+unset SSH_AUTH_SOCK
+mkdir -p "$XDG_RUNTIME_DIR" && chmod 0700 "$XDG_RUNTIME_DIR"
+
+# 3. Create dummy skills directory and skills.conf
+mkdir -p "$TEST_TMP/custom-skills/my-skill"
+cat <<'EOF' >"$TEST_TMP/custom-skills/my-skill/SKILL.md"
+---
+description: Custom test skill
+---
+# Test Skill
+EOF
+
+mkdir -p "$XDG_CONFIG_HOME/claude-container"
+echo "$TEST_TMP/custom-skills" >"$XDG_CONFIG_HOME/claude-container/skills.conf"
+
+# 4. Setup mock podman to verify invocation arguments
+mkdir -p "$TEST_TMP/extra"
+mkdir -p "$TEST_TMP/workspace"
+MOCK_BIN="$TEST_TMP/bin"
+mkdir -p "$MOCK_BIN"
+MOCK_OUT="$TEST_TMP/podman-args.log"
+
+cat <<EOF >"$MOCK_BIN/podman"
+#!/usr/bin/env bash
+printf '%s\n' "\$@" > "$MOCK_OUT"
+EOF
+chmod +x "$MOCK_BIN/podman"
+
+# 5. Execute claude-container with -C container args and trailing claude args
+echo "--> Testing argument collection and passthrough with mock podman..."
+PATH="$MOCK_BIN:$PATH" "$REPO_ROOT/scripts/claude-container" \
+	-C --privileged \
+	-C "--device=/dev/fuse" \
+	-m "$TEST_TMP/extra:$TEST_TMP/extra:ro" \
+	"$TEST_TMP/workspace" \
+	--print \
+	"hello world"
+
+# 6. Validate captured arguments in mock output
+echo "--> Verifying captured podman invocation arguments..."
+
+grep -q -- "--privileged" "$MOCK_OUT" || {
+	echo "FAIL: --privileged not found in container args" >&2
+	exit 1
+}
+
+grep -q -- "--device=/dev/fuse" "$MOCK_OUT" || {
+	echo "FAIL: --device=/dev/fuse not found in container args" >&2
+	exit 1
+}
+
+grep -q -- "docker.io/hyprhvn/claude-container:full" "$MOCK_OUT" || {
+	echo "FAIL: container image name not found" >&2
+	exit 1
+}
+
+# Ensure trailing claude args come AFTER the image name
+IMAGE_LINE=$(grep -n "docker.io/hyprhvn/claude-container:full" "$MOCK_OUT" | cut -d: -f1)
+PRINT_LINE=$(grep -n -- "--print" "$MOCK_OUT" | cut -d: -f1)
+PROMPT_LINE=$(grep -n -- "hello world" "$MOCK_OUT" | cut -d: -f1)
+
+if [[ "$PRINT_LINE" -le "$IMAGE_LINE" || "$PROMPT_LINE" -le "$IMAGE_LINE" ]]; then
+	echo "FAIL: claude arguments are not placed after the container image" >&2
+	exit 1
+fi
+
+# Ensure workspace directory is set correctly
+if ! grep -q -- "-w" "$MOCK_OUT" || ! grep -q -- "$TEST_TMP/workspace" "$MOCK_OUT"; then
+	echo "FAIL: workspace directory flag not found" >&2
+	exit 1
+fi
+
+# Ensure custom mount was included
+grep -q -- "$TEST_TMP/extra:$TEST_TMP/extra:ro" "$MOCK_OUT" || {
+	echo "FAIL: custom mount -m was not found in podman args" >&2
+	exit 1
+}
+
+# 7. Test literal '--' argument separator syntax
+echo "--> Testing explicit '--' argument separator..."
+PATH="$MOCK_BIN:$PATH" "$REPO_ROOT/scripts/claude-container" \
+	-- \
+	"$TEST_TMP/workspace" \
+	-p "explicit prompt"
+
+grep -q -- "-p" "$MOCK_OUT" || {
+	echo "FAIL: -p not found after '--' separator" >&2
+	exit 1
+}
+
+grep -q -- "explicit prompt" "$MOCK_OUT" || {
+	echo "FAIL: prompt text not found after '--' separator" >&2
+	exit 1
+}
+
+echo "==> All CLI argument and mount collection tests passed successfully!"

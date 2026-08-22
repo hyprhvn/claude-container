@@ -37,12 +37,14 @@ RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$UID}/claude-container"
 VERBOSE=false # TODO use this: https://stackoverflow.com/a/8756552/5994623
 MOUNTS=()
 EXTRA_SKILLS_DIRS=()
+CONTAINER_ARGS=()
 
 # -v arguments assembled at runtime by add_mount and add_dir_mounts
 MOUNT_ARGS=()
 
 # set defaults for positionals
 DIR=
+CLAUDE_ARGS=()
 
 # define help message
 usage() {
@@ -58,7 +60,9 @@ NAME
 
 SYNOPSIS
     $prog [-h | --help] [-v | --verbose] [-q | --quiet]
-    $indent [-m | --mount MOUNT]... [--skills-dir DIR]... [DIR]
+    $indent [-m | --mount MOUNT]... [--skills-dir DIR]...
+    $indent [-C | --container-arg ARG]...
+    $indent [DIR] [CLAUDE_ARGS...]
 
 DESCRIPTION
 
@@ -68,25 +72,36 @@ OPTIONS
 
     Basic Options
 
-        -h, --help        display this help message and exit
-        -v, --verbose     print more output (default)
-        -q, --quiet       print less output (buggy, do not use!)
+        -h, --help               display this help message and exit
+        -v, --verbose            print more output (default)
+        -q, --quiet              print less output (buggy, do not use!)
 
     Advanced Options
 
-        -m, --mount       mount an additional host path into the container, in
-                          the podman -v syntax, <from>:<to>[:<options>]. May be
-                          given more than once. <to> defaults to the resolved
-                          <from>, <options> defaults to z. Sources are resolved
-                          through symlinks, targets are used as given.
+        -m, --mount MOUNT        mount an additional host path into the
+                                 container, in the podman -v syntax,
+                                 <from>:<to>[:<options>]. May be given more than
+                                 once. <to> defaults to the resolved <from>,
+                                 <options> defaults to z. Sources are resolved
+                                 through symlinks, targets are used as given.
 
-        --skills-dir DIR  mount additional skills from the specified directory
-                          into /root/.claude/skills. May be specified multiple
-                          times.
+        --skills-dir DIR         mount additional skills from the specified
+                                 directory into /root/.claude/skills. May be
+                                 specified multiple times.
+
+        -C, --container-arg ARG  pass an extra flag or argument directly to
+                                 the podman container runtime (e.g.
+                                 --privileged, --device=/dev/fuse). May be
+                                 specified multiple times.
 
     Positional Arguments
 
-        DIR               the directory in which claude should work (default is \$PWD)
+        DIR                      the directory in which claude should work
+                                 (default is \$PWD)
+
+        CLAUDE_ARGS              optional trailing arguments passed directly to
+                                 the claude executable inside the container
+                                 (e.g. --help, config, -p "prompt")
 
 EOF
 }
@@ -126,17 +141,47 @@ get_opts() {
 			shift
 			EXTRA_SKILLS_DIRS+=("${1}")
 			;;
-		-*) # fail on unrecognized flags
-			echo -e "Unknown flag ${argument}\n"
-			usage
-			exit 2
+		-C | --container-arg)
+			if [[ $# -lt 2 ]]; then
+				echo -e "Missing argument for ${argument}\n"
+				usage
+				exit 2
+			fi
+			shift
+			CONTAINER_ARGS+=("${1}")
+			;;
+		--) # separator: all subsequent arguments are positionals / claude args
+			shift
+			if [[ -z $DIR && $# -gt 0 ]]; then
+				DIR="${1}"
+				shift
+			fi
+			CLAUDE_ARGS+=("${@}")
+			break
+			;;
+		--*) # unrecognized long flag
+			if [[ -n "$DIR" ]]; then
+				CLAUDE_ARGS+=("${argument}")
+			else
+				echo -e "Unknown flag ${argument}\n"
+				usage
+				exit 2
+			fi
+			;;
+		-*) # unrecognized short flag
+			if [[ -n "$DIR" ]]; then
+				CLAUDE_ARGS+=("${argument}")
+			else
+				echo -e "Unknown flag ${argument}\n"
+				usage
+				exit 2
+			fi
 			;;
 		*) # parse positionals
 			if [[ -z $DIR ]]; then
 				DIR="${argument}"
 			else
-				echo -e "Unknown positional argument ${argument}\n"
-				exit 3
+				CLAUDE_ARGS+=("${argument}")
 			fi
 			;;
 		esac
@@ -485,7 +530,9 @@ run_claude() {
 		-v "$DIR:$DIR:z" \
 		"${SSH_ARGS[@]}" \
 		"${MOUNT_ARGS[@]}" \
-		docker.io/hyprhvn/claude-container:full
+		"${CONTAINER_ARGS[@]}" \
+		docker.io/hyprhvn/claude-container:full \
+		"${CLAUDE_ARGS[@]}"
 }
 
 main() {

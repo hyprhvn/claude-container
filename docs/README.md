@@ -1,6 +1,6 @@
 # Documentation Index
 
-This directory contains comprehensive technical documentation for the `claude-container` architecture, storage partitioning, SELinux policies, and operational workflows.
+This directory contains comprehensive technical documentation for the `claude-container` architecture, storage partitioning, SELinux policies, testing, and operational workflows.
 
 ---
 
@@ -45,3 +45,9 @@ This directory contains comprehensive technical documentation for the `claude-co
    - Read-only Git configuration forwarding (`.gitconfig` and `.config/git`).
    - GNU Stow symlink traversal with `add_dir_mounts`.
    - SELinux `:z` volume relabeling and the `$HOME` boundary safety restriction.
+
+7. **[Testing & Podman-in-Podman (PinP)](testing.md)**
+   - Container argument passthrough (`-C`, `--container-arg`).
+   - Claude trailing arguments forwarding.
+   - Podman-in-Podman (PinP) testing requirements and outer container setup.
+   - Automated testing suite (`tests/test-pinp.sh`).
