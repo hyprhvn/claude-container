@@ -2,8 +2,6 @@
 
 This document explains how to test `claude-container`, verify CLI argument passthrough, and run automated integration tests nested inside a container (Podman-in-Podman / PinP).
 
----
-
 ## 1. CLI Argument Passthrough
 
 The launcher script `scripts/claude-container` supports two distinct levels of argument forwarding:
@@ -15,6 +13,7 @@ claude-container [-h] [-v | -q] [-m MOUNT]... [--skills-dir DIR]...
 ```
 
 ### A. Container Runtime Arguments (`-C`, `--container-arg`)
+
 Pass extra arguments directly to the underlying `podman run` invocation before the image name. This is useful for passing security flags, capabilities, device nodes, or custom runtime environment variables:
 
 ```bash
@@ -26,6 +25,7 @@ Pass extra arguments directly to the underlying `podman run` invocation before t
 ```
 
 ### B. Claude Arguments (`CLAUDE_ARGS...`)
+
 Any arguments provided **after** the positional workspace directory `DIR` (or after a literal `--` argument separator) are passed directly to the `claude` executable inside the container:
 
 ```bash
@@ -38,8 +38,6 @@ Any arguments provided **after** the positional workspace directory `DIR` (or af
 # Configure claude settings
 ./scripts/claude-container /workspace config
 ```
-
----
 
 ## 2. Podman-in-Podman (PinP) Testing
 
@@ -82,11 +80,10 @@ EOF
 ./tests/test-pinp.sh
 ```
 
----
-
 ## 3. Automated Test Suite (`tests/test-pinp.sh`)
 
 The automated script [`tests/test-pinp.sh`](../tests/test-pinp.sh) validates:
+
 - Option parsing for basic (`-h`, `-v`, `-q`), advanced (`-m`, `--skills-dir`, `-C/--container-arg`), and positional arguments.
 - Verification that container arguments appear before the image name in `podman run`.
 - Verification that Claude trailing arguments appear after the image name in `podman run`.
