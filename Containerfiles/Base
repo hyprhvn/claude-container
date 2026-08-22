@@ -1,4 +1,4 @@
-FROM alpine:3.20
+FROM alpine:3.24
 
 # Add the Anthropic signing key and stable apk repository
 RUN wget -O /etc/apk/keys/claude-code.rsa.pub \
