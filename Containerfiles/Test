@@ -1,0 +1,8 @@
+FROM docker.io/hyprhvn/claude-container:full
+# add PinP tooling for self-testing to the Full container
+
+# tools to run podman in podman
+RUN apk add --no-cache \
+    podman \
+    fuse-overlayfs \
+    shadow
