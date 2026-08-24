@@ -108,3 +108,6 @@ RUN apk add --no-cache \
         bash-language-server \
         typescript typescript-language-server \
     && npm cache clean --force
+
+# update claude
+RUN apk upgrade claude-code
