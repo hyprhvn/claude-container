@@ -48,9 +48,11 @@ RUN apk add --no-cache \
 
 # doc
 RUN apk add --no-cache \
+        latexmk \
         texlive \
         texlive-latexextra \
         texlive-latexrecommended \
+        texlive-fonts-recommended \
         plantuml \
         graphviz
 
