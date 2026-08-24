@@ -77,7 +77,8 @@ RUN --mount=type=cache,target=/var/cache/apk \
         nodejs \
         npm \
         rust \
-        cargo
+        cargo \
+        go
 
 # VCS tooling + jj binary copied from builder
 RUN --mount=type=cache,target=/var/cache/apk \
@@ -136,6 +137,7 @@ RUN --mount=type=cache,target=/var/cache/apk \
         py3-lsp-server \
         jdtls \
         rust-analyzer \
+        gopls \
     && npm install -g \
         bash-language-server \
         typescript \
