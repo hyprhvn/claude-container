@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1
+
 FROM alpine:3.24
 
 # Add the Anthropic signing key and stable apk repository
@@ -7,7 +9,9 @@ RUN wget -O /etc/apk/keys/claude-code.rsa.pub \
     >> /etc/apk/repositories
 
 # Install Claude Code
-RUN apk add --no-cache claude-code
+RUN --mount=type=cache,target=/var/cache/apk \
+    apk add claude-code
+
 WORKDIR /workspace
 
 ENTRYPOINT ["claude"]
