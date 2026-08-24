@@ -145,5 +145,25 @@ RUN --mount=type=cache,target=/var/cache/apk \
         bash-language-server \
         typescript-language-server
 
+# Formatters & Linters
+# Notes:
+# - clang-format and clang-tidy are provided by clang-extra-tools
+# - ruff is provided by uv
+# - Java formatters/linters are typically executed via maven/gradle
+RUN --mount=type=cache,target=/var/cache/apk \
+    --mount=type=cache,target=/root/.npm \
+    apk add \
+        shellcheck \
+        shfmt \
+        yamllint \
+        golangci-lint \
+        cppcheck \
+        rustfmt \
+        clippy \
+    && npm install -g \
+        eslint \
+        prettier \
+        markdownlint-cli
+
 # Claude update
 RUN apk upgrade claude-code
