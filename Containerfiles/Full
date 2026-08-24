@@ -1,8 +1,44 @@
-FROM docker.io/hyprhvn/claude-container:base
-# add common dev tooling to the Base container
+# syntax=docker/dockerfile:1
 
-# basic system utils
-RUN apk add --no-cache \
+# ==============================================================================
+# 1. BUILDER STAGE: Compiles native binaries and wheels
+# ==============================================================================
+FROM alpine:3.24 AS builder
+
+RUN --mount=type=cache,target=/var/cache/apk \
+    apk add \
+        build-base \
+        musl-dev \
+        rust \
+        cargo \
+        python3 \
+        python3-dev \
+        py3-pip \
+        cmake
+
+# Build jj-cli with cached cargo registries
+RUN --mount=type=cache,target=/root/.cargo/registry \
+    --mount=type=cache,target=/root/.cargo/git \
+    cargo install --locked --bin jj --root /build/cargo jj-cli
+
+# Pre-compile DuckDB into a reusable wheel
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip wheel --no-deps --wheel-dir=/build/wheels duckdb
+
+
+# ==============================================================================
+# 2. RUNTIME STAGE: Final image without build-time toolchains
+# ==============================================================================
+FROM docker.io/hyprhvn/claude-container:base
+
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
+    PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser \
+    PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+
+# System utils
+RUN --mount=type=cache,target=/var/cache/apk \
+    apk add \
         bash \
         coreutils \
         findutils \
@@ -11,8 +47,9 @@ RUN apk add --no-cache \
         gawk \
         procps
 
-# networking
-RUN apk add --no-cache \
+# Networking
+RUN --mount=type=cache,target=/var/cache/apk \
+    apk add \
         iputils \
         iproute2 \
         traceroute \
@@ -28,61 +65,50 @@ RUN apk add --no-cache \
         bind-tools \
         openssh-client
 
-# language support
-RUN apk add --no-cache \
-        build-base cmake \
-        musl-dev \
-        python3 python3-dev \
-        py3-pip uv \
+# Runtimes & build managers
+RUN --mount=type=cache,target=/var/cache/apk \
+    apk add \
+        python3 \
+        py3-pip \
+        uv \
         openjdk25 \
-        maven gradle \
+        maven \
+        gradle \
         nodejs \
-        npm \
-        rust \
-        cargo
+        npm
 
-# 
-ENV PATH=$PATH:/root/.cargo/bin
-
-# VCS
-RUN apk add --no-cache \
+# VCS tooling + jj binary copied from builder
+RUN --mount=type=cache,target=/var/cache/apk \
+    apk add \
         git \
         git-lfs \
         patch \
-        patchutils \
-    && cargo install --locked --bin jj jj-cli \
-    && rm -rf /root/.cargo/registry /root/.cargo/git
+        patchutils
+COPY --from=builder /build/cargo/bin/jj /usr/local/bin/jj
 
-# Prevent playwright from downloading the incompatible glibc Chromium binary
-# and set a single source of truth for the browser binary location that can be used in scripts
-ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
-    PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser \
-    NODE_PATH=/usr/local/lib/node_modules
-
-# Install headless browser and playwright
-RUN apk add --no-cache \
+# Headless browser & playwright
+RUN --mount=type=cache,target=/var/cache/apk \
+    --mount=type=cache,target=/root/.npm \
+    apk add \
         chromium \
         font-noto \
         font-noto-cjk \
-    && npm install -g playwright \
-    && npm cache clean --force
+    && npm install -g playwright
 
-# Prevent npm/puppeteer from downloading the incompatible glibc Chromium binary
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
-    PUPPETEER_EXECUTABLE_PATH=$PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
-
-# doc
-RUN apk add --no-cache \
+# Documentation tooling
+RUN --mount=type=cache,target=/var/cache/apk \
+    --mount=type=cache,target=/root/.npm \
+    apk add \
         texlive \
         texlive-latexextra \
         texlive-latexrecommended \
         plantuml \
         graphviz \
-    && npm install -g @mermaid-js/mermaid-cli \
-    && npm cache clean --force
+    && npm install -g @mermaid-js/mermaid-cli
 
-# agent tooling
-RUN apk add --no-cache \
+# Agent tooling: Bind mount wheels directly into the install step
+RUN --mount=type=cache,target=/var/cache/apk \
+    apk add \
         ast-grep \
         ripgrep \
         fd \
@@ -91,23 +117,27 @@ RUN apk add --no-cache \
         yq-go \
         htmlq \
         xmlstarlet \
-        miller \
-    && pip install --no-cache-dir --break-system-packages \
-        csvkit \
-        duckdb \
-        jc \
-    && rm -rf /tmp/*
+        miller
 
-# language servers
-RUN apk add --no-cache \
+RUN --mount=type=bind,from=builder,source=/build/wheels,target=/tmp/wheels \
+    --mount=type=cache,target=/root/.cache/pip \
+    pip install --break-system-packages \
+        /tmp/wheels/* \
+        csvkit \
+        jc
+
+# Language servers
+RUN --mount=type=cache,target=/var/cache/apk \
+    --mount=type=cache,target=/root/.npm \
+    apk add \
         clang-extra-tools \
         py3-lsp-server \
         jdtls \
         rust-analyzer \
     && npm install -g \
         bash-language-server \
-        typescript typescript-language-server \
-    && npm cache clean --force
+        typescript \
+        typescript-language-server
 
-# update claude
+# Claude update
 RUN apk upgrade claude-code
