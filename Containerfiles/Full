@@ -75,7 +75,9 @@ RUN --mount=type=cache,target=/var/cache/apk \
         maven \
         gradle \
         nodejs \
-        npm
+        npm \
+        rust \
+        cargo
 
 # VCS tooling + jj binary copied from builder
 RUN --mount=type=cache,target=/var/cache/apk \
