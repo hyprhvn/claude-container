@@ -2,7 +2,7 @@ FROM docker.io/hyprhvn/claude-container:base
 # add common dev tooling to the Base container
 
 # basic system utils
-RUN apk update && apk add --no-cache \
+RUN apk add --no-cache \
         bash \
         coreutils \
         findutils \
@@ -30,7 +30,7 @@ RUN apk add --no-cache \
 
 # language support
 RUN apk add --no-cache \
-        build-base \
+        build-base cmake \
         musl-dev \
         python3 python3-dev \
         py3-pip uv \
@@ -41,26 +41,31 @@ RUN apk add --no-cache \
         rust \
         cargo
 
+# 
+ENV PATH=$PATH:/root/.cargo/bin
+
 # VCS
 RUN apk add --no-cache \
         git \
         git-lfs \
         patch \
         patchutils \
-    && cargo install --locked --bin jj jj-cli
+    && cargo install --locked --bin jj jj-cli \
+    && rm -rf /root/.cargo/registry /root/.cargo/git
 
 # Prevent playwright from downloading the incompatible glibc Chromium binary
 # and set a single source of truth for the browser binary location that can be used in scripts
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
     PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser \
-    NODE_PATH=/usr/lib/node_modules
+    NODE_PATH=/usr/local/lib/node_modules
 
 # Install headless browser and playwright
 RUN apk add --no-cache \
         chromium \
         font-noto \
         font-noto-cjk \
-    && npm install -g playwright
+    && npm install -g playwright \
+    && npm cache clean --force
 
 # Prevent npm/puppeteer from downloading the incompatible glibc Chromium binary
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
@@ -73,11 +78,11 @@ RUN apk add --no-cache \
         texlive-latexrecommended \
         plantuml \
         graphviz \
-    && npm install -g @mermaid-js/mermaid-cli
+    && npm install -g @mermaid-js/mermaid-cli \
+    && npm cache clean --force
 
 # agent tooling
 RUN apk add --no-cache \
-        python3-dev cmake \
         ast-grep \
         ripgrep \
         fd \
@@ -90,7 +95,8 @@ RUN apk add --no-cache \
     && pip install --no-cache-dir --break-system-packages \
         csvkit \
         duckdb \
-        jc
+        jc \
+    && rm -rf /tmp/*
 
 # language servers
 RUN apk add --no-cache \
@@ -100,4 +106,5 @@ RUN apk add --no-cache \
         rust-analyzer \
     && npm install -g \
         bash-language-server \
-        typescript typescript-language-server
+        typescript typescript-language-server \
+    && npm cache clean --force
