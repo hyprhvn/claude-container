@@ -67,6 +67,7 @@ RUN --mount=type=cache,target=/var/cache/apk \
 
 # Runtimes & build managers
 RUN --mount=type=cache,target=/var/cache/apk \
+    --mount=type=cache,target=/root/.npm \
     apk add \
         python3 \
         py3-pip \
@@ -78,7 +79,8 @@ RUN --mount=type=cache,target=/var/cache/apk \
         npm \
         rust \
         cargo \
-        go
+        go \
+    && npm install -g typescript
 
 # VCS tooling + jj binary copied from builder
 RUN --mount=type=cache,target=/var/cache/apk \
@@ -140,7 +142,6 @@ RUN --mount=type=cache,target=/var/cache/apk \
         gopls \
     && npm install -g \
         bash-language-server \
-        typescript \
         typescript-language-server
 
 # Claude update
