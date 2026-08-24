@@ -28,56 +28,76 @@ RUN apk add --no-cache \
         bind-tools \
         openssh-client
 
-# VCS
-RUN apk add --no-cache \
-        git \
-        git-lfs \
-        patch \
-        patchutils
-
-# dev
+# language support
 RUN apk add --no-cache \
         build-base \
         musl-dev \
-        python3 \
-        py3-pip \
+        python3 python3-dev \
+        py3-pip uv \
+        openjdk25 \
+        maven gradle \
         nodejs \
         npm \
         rust \
         cargo
 
-# doc
+# VCS
 RUN apk add --no-cache \
-        latexmk \
-        texlive \
-        texlive-latexextra \
-        texlive-latexrecommended \
-        texlive-fonts-recommended \
-        plantuml \
-        graphviz
+        git \
+        git-lfs \
+        patch \
+        patchutils \
+    && cargo install --locked --bin jj jj-cli
 
-# Prevent npm/puppeteer from downloading the incompatible glibc Chromium binary
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
-    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+# Prevent playwright from downloading the incompatible glibc Chromium binary
+# and set a single source of truth for the browser binary location that can be used in scripts
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
+    PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser \
+    NODE_PATH=/usr/lib/node_modules
 
-# Install mermaid-cli globally
+# Install headless browser and playwright
 RUN apk add --no-cache \
         chromium \
         font-noto \
         font-noto-cjk \
+    && npm install -g playwright
+
+# Prevent npm/puppeteer from downloading the incompatible glibc Chromium binary
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
+    PUPPETEER_EXECUTABLE_PATH=$PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+
+# doc
+RUN apk add --no-cache \
+        texlive \
+        texlive-latexextra \
+        texlive-latexrecommended \
+        plantuml \
+        graphviz \
     && npm install -g @mermaid-js/mermaid-cli
 
 # agent tooling
 RUN apk add --no-cache \
-    ast-grep \
-    ripgrep \
-    fd \
-    ctags \
-    jq \
-    yq-go \
-    htmlq \
-    xmlstarlet \
-    miller \
-    csvkit \
-    duckdb \
-    && pip install --no-cache-dir --break-system-packages jc
+        python3-dev cmake \
+        ast-grep \
+        ripgrep \
+        fd \
+        ctags \
+        jq \
+        yq-go \
+        htmlq \
+        xmlstarlet \
+        miller \
+    && pip install --no-cache-dir --break-system-packages \
+        csvkit \
+        duckdb \
+        jc
+
+# language servers
+RUN apk add --no-cache \
+        clang-extra-tools \
+        py3-lsp-server \
+        jdtls \
+        rust-analyzer \
+    && npm install -g \
+        bash-language-server \
+        typescript typescript-language-server
