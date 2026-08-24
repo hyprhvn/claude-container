@@ -1,22 +1,81 @@
 FROM docker.io/hyprhvn/claude-container:base
+# add common dev tooling to the Base container
 
-# add common dev tooling
+# basic system utils
 RUN apk update && apk add --no-cache \
-    bash \
-    coreutils \
-    findutils \
-    grep \
-    sed \
-    gawk \
-    curl \
-    wget \
+        bash \
+        coreutils \
+        findutils \
+        grep \
+        sed \
+        gawk \
+        procps
+
+# networking
+RUN apk add --no-cache \
+        iputils \
+        iproute2 \
+        traceroute \
+        mtr \
+        iperf \
+        conntrack-tools \
+        ethtool \
+        nmap \
+        nmap-ncat \
+        socat \
+        curl \
+        wget \
+        bind-tools \
+        openssh-client
+
+# VCS
+RUN apk add --no-cache \
+        git \
+        git-lfs \
+        patch \
+        patchutils
+
+# dev
+RUN apk add --no-cache \
+        build-base \
+        musl-dev \
+        python3 \
+        py3-pip \
+        nodejs \
+        npm \
+        rust \
+        cargo
+
+# doc
+RUN apk add --no-cache \
+        texlive \
+        texlive-latexextra \
+        texlive-latexrecommended \
+        plantuml \
+        graphviz
+
+# Prevent npm/puppeteer from downloading the incompatible glibc Chromium binary
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+
+# Install mermaid-cli globally
+RUN apk add --no-cache \
+        chromium \
+        font-noto \
+        font-noto-cjk \
+    && npm install -g @mermaid-js/mermaid-cli
+
+# agent tooling
+RUN apk add --no-cache \
+    ast-grep \
+    ripgrep \
+    fd \
+    ctags \
     jq \
-    git \
-    git-lfs \
-    openssh-client \
-    build-base \
-    musl-dev \
-    python3 \
-    py3-pip \
-    procps \
-    iproute2
+    yq-go \
+    htmlq \
+    xmlstarlet \
+    miller \
+    csvkit \
+    duckdb \
+    && pip install --no-cache-dir --break-system-packages jc
