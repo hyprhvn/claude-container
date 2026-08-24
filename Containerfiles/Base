@@ -7,7 +7,7 @@ RUN wget -O /etc/apk/keys/claude-code.rsa.pub \
     >> /etc/apk/repositories
 
 # Install Claude Code
-RUN apk update && apk add --no-cache claude-code
+RUN apk add --no-cache claude-code
 WORKDIR /workspace
 
 ENTRYPOINT ["claude"]
