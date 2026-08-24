@@ -23,14 +23,42 @@ echo "==> Running PinP and CLI Argument Tests in: $TEST_TMP"
 echo "--> Testing --help option..."
 "$REPO_ROOT/scripts/claude-container" --help >/dev/null
 
-# 2. Configure isolated environment
+# 2. Test skeleton seeding via migrate-from-home on fresh setup
+echo "--> Testing skeleton seeding via migrate-from-home..."
 export XDG_CONFIG_HOME="$TEST_TMP/config"
 export XDG_DATA_HOME="$TEST_TMP/data"
 export XDG_STATE_HOME="$TEST_TMP/state"
 export XDG_CACHE_HOME="$TEST_TMP/cache"
 export XDG_RUNTIME_DIR="$TEST_TMP/run"
+export CLAUDE_LEGACY_DIR="$TEST_TMP/legacy-claude"
+export CLAUDE_LEGACY_JSON="$TEST_TMP/legacy-claude.json"
 unset SSH_AUTH_SOCK
 mkdir -p "$XDG_RUNTIME_DIR" && chmod 0700 "$XDG_RUNTIME_DIR"
+
+# Run migrate-from-home to seed skeleton
+"$REPO_ROOT/scripts/migrate-from-home"
+
+# Verify seeded files
+[[ -f "$XDG_CONFIG_HOME/claude-container/rules/container.md" ]] || {
+	echo "FAIL: rules/container.md was not seeded" >&2
+	exit 1
+}
+[[ -f "$XDG_CONFIG_HOME/claude-container/CLAUDE.md" ]] || {
+	echo "FAIL: CLAUDE.md was not seeded" >&2
+	exit 1
+}
+[[ -f "$XDG_STATE_HOME/claude-container/claude.json" ]] || {
+	echo "FAIL: claude.json was not seeded" >&2
+	exit 1
+}
+
+# Verify non-destructive behavior: existing files must not be overwritten
+echo "custom-instruction" > "$XDG_CONFIG_HOME/claude-container/CLAUDE.md"
+"$REPO_ROOT/scripts/migrate-from-home"
+grep -q "custom-instruction" "$XDG_CONFIG_HOME/claude-container/CLAUDE.md" || {
+	echo "FAIL: migrate-from-home overwrote existing user CLAUDE.md" >&2
+	exit 1
+}
 
 # 3. Create dummy skills directory and skills.conf
 mkdir -p "$TEST_TMP/custom-skills/my-skill"
@@ -104,6 +132,16 @@ fi
 # Ensure custom mount was included
 grep -q -- "$TEST_TMP/extra:$TEST_TMP/extra:ro" "$MOCK_OUT" || {
 	echo "FAIL: custom mount -m was not found in podman args" >&2
+	exit 1
+}
+
+# Ensure rules directory and CLAUDE.md are mounted into podman args
+grep -q -- "$XDG_CONFIG_HOME/claude-container/rules:/root/.claude/rules:ro,z" "$MOCK_OUT" || {
+	echo "FAIL: rules directory mount was not found in podman args" >&2
+	exit 1
+}
+grep -q -- "$XDG_CONFIG_HOME/claude-container/CLAUDE.md:/root/.claude/CLAUDE.md:rw,z" "$MOCK_OUT" || {
+	echo "FAIL: CLAUDE.md mount was not found in podman args" >&2
 	exit 1
 }
 

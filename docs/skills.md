@@ -101,7 +101,16 @@ all-skills-bundle/
 
 Each subdirectory is individually mounted as `/root/.claude/skills/<subdir-name>` (`/root/.claude/skills/docker-tools`, `/root/.claude/skills/k8s-helper`, etc.).
 
-## 4. Symlink Resolution & GNU Stow Compatibility
+## 4. Rules vs. Skills (Ambient Context vs. On-Demand)
+
+Claude Code supports two related but distinct extension mechanisms, and `claude-container` seeds one of them by default:
+
+- **Rules (`~/.claude/rules/`):** Plain Markdown instruction files loaded **ambiently into context on every startup** (unless a `paths:` frontmatter key restricts them to specific files). They are the right place for always-relevant environmental context. `migrate-from-home` seeds a default `rules/container.md` describing the Alpine container environment and the catalog of pre-installed CLI tools, so the agent always knows what it is running in.
+- **Skills (`~/.claude/skills/`):** Packaged capabilities (a `SKILL.md` plus optional `references/`, `scripts/`) that are **activated on demand** via tool selection or invocation. They conserve context tokens because their full body is not loaded up front, but they must be explicitly triggered.
+
+Because the container environment and available tooling are relevant to *every* task, they ship as a default **rule** (seeded from `skel/`) rather than a skill. If you prefer the tooling catalog to be opt-in instead, convert `rules/container.md` into a skill under `$CONFIG_DIR/skills/container/SKILL.md` and remove the rule.
+
+## 5. Symlink Resolution & GNU Stow Compatibility
 
 When managing dotfiles or skills via symlink tools (such as [GNU Stow](https://www.gnu.org/software/stow/)), directories often consist of symlinks pointing back to a central `.dotfiles` repository.
 

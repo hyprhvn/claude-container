@@ -82,7 +82,25 @@ Stores runtime ephemeral IPC resources.
 - Holds the temporary Unix domain socket `agent.sock` created by `socat`.
 - Cleaned up automatically on script termination via Bash `trap cleanup EXIT`.
 
-## 4. Scaffold & Initialization Logic
+## 4. Template Skeleton (`skel/`) & First-Run Provisioning
+
+The repository provides a template skeleton under `skel/` that mirrors the XDG directory layout:
+
+```
+skel/
+├── config/
+│   ├── CLAUDE.md                    # Starter global instructions referencing rules/container.md
+│   └── rules/
+│       └── container.md             # Ambiently loaded container environment & available tools
+├── data/
+│   └── skills/                      # Default imported/external skills directory
+└── state/
+    └── claude.json                  # Baseline config state "{}"
+```
+
+Running `scripts/migrate-from-home` on a fresh system (or during migration) automatically seeds these starter files non-destructively without overwriting existing files.
+
+## 5. Scaffold & Initialization Logic
 
 When `scripts/claude-container` runs, `ensure_locations()` automatically checks and scaffolds the required directory structure:
 

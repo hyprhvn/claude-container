@@ -43,6 +43,7 @@ Running without flags performs the migration:
 2. Creates an automatic timestamped backup at `~/.claude.backup.<YYYYMMDD_HHMMSS>/`.
 3. Moves files and directories to their XDG targets.
 4. Cleans up the empty legacy `~/.claude` directory if no unhandled files remain.
+5. Seeds any missing starter templates (e.g. `rules/container.md`) from `skel/` without overwriting existing files.
 
 ```bash
 ./scripts/migrate-from-home
@@ -82,7 +83,8 @@ OPTIONS
 
 ## 4. Fresh Installation & Clean Initialization
 
-If you have no legacy `~/.claude` or `~/.claude.json` on the system:
-
-1. Running `./scripts/migrate-from-home` will detect that no legacy directory exists and initialize the fresh XDG skeleton with an initial `{}` state in `$STATE_DIR/claude.json`.
-2. Alternatively, running `./scripts/claude-container` directly will automatically scaffold the directories and minimal files on its very first launch via `ensure_locations()`.
+If you have no legacy `~/.claude` or `~/.claude.json` on the system, executing `scripts/migrate-from-home` initializes the fresh directory structure and automatically seeds starter templates from `skel/`:
+- `$CONFIG_DIR/CLAUDE.md`: Global starter instructions for containerized Claude Code.
+- `$CONFIG_DIR/rules/container.md`: Container environment details and CLI tools catalog.
+- `$STATE_DIR/claude.json`: Minimal valid state JSON (`{}`).
+- `$DATA_DIR/skills/`: External skills directory.

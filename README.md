@@ -66,7 +66,7 @@ If you have an existing legacy `~/.claude` directory or `~/.claude.json` file, r
 ./scripts/migrate-from-home --copy
 ```
 
-If starting fresh without existing configuration, running `scripts/migrate-from-home` or launching `scripts/claude-container` automatically scaffolds the minimal required directory structure and a valid initial `claude.json`.
+If starting fresh without existing configuration, running `scripts/migrate-from-home` initializes the XDG directory structure and seeds starter templates from `skel/` (including default global instructions `CLAUDE.md` and container environment rules `rules/container.md`). When launching `scripts/claude-container`, missing directories and a minimal `claude.json` state are automatically ensured.
 
 ## Usage
 

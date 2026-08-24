@@ -27,6 +27,7 @@ External skills are discoverable and mounted from:
 ## Migration & Initialization
 
 - `scripts/migrate-from-home` handles migrating legacy `~/.claude` and `~/.claude.json` configurations into the modular XDG layout with backup support (`--dry-run`, `--copy`, `--no-backup`).
+- On initial rollout, `scripts/migrate-from-home` seeds starter files from `skel/` (global `CLAUDE.md`, container rule `rules/container.md`, baseline `claude.json`) non-destructively — existing files are never overwritten.
 - `scripts/claude-container` automatically scaffolds empty XDG directories and an initial `{}` `claude.json` state if run on a clean environment.
 
 ## SSH Agent Forwarding & SELinux
