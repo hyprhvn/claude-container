@@ -159,7 +159,7 @@ RUN --mount=type=cache,target=/var/cache/apk \
         golangci-lint \
         cppcheck \
         rustfmt \
-        clippy \
+        rust-clippy \
     && npm install -g \
         eslint \
         prettier \
