@@ -106,17 +106,24 @@ echo '(allow container_t unconfined_t (unix_stream_socket (connectto)))' | sudo 
 
 ## 5. Verification & Diagnostics
 
-Use the host diagnostic script `debug.sh` while the container is running to inspect SELinux contexts, socket labels, and policy rules:
+Two levels of verification:
 
-```bash
-./debug.sh
-```
+### Live host (real deployment)
 
-Inside the container, test SSH agent access:
+While the container is running, test SSH agent access from inside:
 
 ```console
 $ ssh-add -l
 2048 SHA256:... user@hostname (RSA)
 ```
 
-SSH operations (including `git push` and `git fetch` over SSH) will function without permission errors.
+SSH operations (including `git push` and `git fetch` over SSH) will function without permission errors. Inspect the forwarder socket label on the host:
+
+```bash
+ls -lZ "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/claude-container/agent.sock"   # expect container_file_t
+semodule -l | grep container_ssh_forward
+```
+
+### Self-contained test environment (no host access needed)
+
+The `claude-container:test` image (`Containerfiles/Test`) plus `scripts/test-env` reproduce the full setup inside a Podman-in-Podman environment — fixture SSH agent, socat forwarder, SELinux policy checks — and the agent can debug it in place. The Test container must be started `--privileged` **with a selinuxfs bind mount** (`-v /sys/fs/selinux:/sys/fs/selinux:ro` — the `spc_t` domain cannot mount selinuxfs itself; ro suffices because the image never writes selinuxfs), and the `connectto` module(s) must be loaded on the host first (the image cannot compile CIL). See [Testing](testing.md) and the `container-debug` skill.

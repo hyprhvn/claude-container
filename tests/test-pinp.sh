@@ -162,4 +162,51 @@ grep -q -- "explicit prompt" "$MOCK_OUT" || {
 	exit 1
 }
 
+# 8. Sanity-check the test environment script and its skill wiring.
+#    A full test-env run needs an active SELinux host plus a privileged Test
+#    container, so keep these checks side-effect-free.
+echo "--> Sanity-checking scripts/test-env and the container-debug skill..."
+bash -n "$REPO_ROOT/scripts/test-env" || {
+	echo "FAIL: scripts/test-env has a syntax error" >&2
+	exit 1
+}
+
+"$REPO_ROOT/scripts/test-env" --help | grep -q "test-env" || {
+	echo "FAIL: scripts/test-env --help did not print usage" >&2
+	exit 1
+}
+
+# The container-debug skill must exist where Containerfiles/Test copies it from.
+[[ -f "$REPO_ROOT/skel/test/skills/container-debug/SKILL.md" ]] || {
+	echo "FAIL: container-debug skill not found at skel/test/skills/" >&2
+	exit 1
+}
+
+grep -q "skel/test/skills/" "$REPO_ROOT/Containerfiles/Test" || {
+	echo "FAIL: Containerfiles/Test does not COPY skel/test/skills/" >&2
+	exit 1
+}
+
+# test-env's contract: on a SELinux host a full run requires the privileged
+# Test container (verified there); without usable SELinux it MUST hard-fail
+# with a clear message rather than build a misleading environment.
+# Detect SELinux the same way test-env does — via /sys/fs/selinux, NOT
+# selinuxenabled: the library's mount registry may never be populated in a
+# container (observed: host Enforcing, yet selinuxenabled says "disabled"
+# behind a read-only bind), which would take the hard-fail branch falsely.
+if [[ -f /sys/fs/selinux/enforce ]] && [[ -s /sys/fs/selinux/policy ]]; then
+	echo "--> SELinux active: full test-env run is covered by the Test container workflow."
+else
+	"$REPO_ROOT/scripts/test-env" 2>"$TEST_TMP/test-env-err.log" && {
+		echo "FAIL: test-env exited 0 without active SELinux" >&2
+		exit 1
+	}
+	grep -qE "SELinux is not active|SELinux appears active but /sys/fs/selinux is not usable" "$TEST_TMP/test-env-err.log" || {
+		echo "FAIL: test-env failed without the expected SELinux error message" >&2
+		cat "$TEST_TMP/test-env-err.log" >&2
+		exit 1
+	}
+	echo "--> test-env correctly hard-fails without usable SELinux."
+fi
+
 echo "==> All CLI argument and mount collection tests passed successfully!"

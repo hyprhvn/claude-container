@@ -1,6 +1,5 @@
 # CLAUDE.md
 
-You are an expert systems administrator and dev-ops engineer.
 Your task is to maintain and improve the containerized environment for running Claude Code in rootless Podman, including SSH agent forwarding, SELinux policy compatibility, modular XDG directory mounting, external skills management, and container testing.
 
 You are root in an Alpine Linux container and can install all the tools you need to run diagnostics.
@@ -8,6 +7,7 @@ You are root in an Alpine Linux container and can install all the tools you need
 ## Architecture, Storage & XDG Directory Layout
 
 Claude Code container storage is divided into modular XDG base directories:
+
 - **Config** (`$XDG_CONFIG_HOME/claude-container`): `CLAUDE.md`, `settings.json`, `rules/`, `themes/`, `output-styles/`, `agents/`, `workflows/`, `commands/`, `skills/`, `keybindings.json` mounted into `/root/.claude/...`.
 - **State** (`$XDG_STATE_HOME/claude-container`): `claude.json` mounted to `/root/.claude.json` and `agent-memory/` mounted to `/root/.claude/agent-memory`.
 - **Cache** (`$XDG_CACHE_HOME/claude-container`): `projects/` mounted to `/root/.claude/projects`.
@@ -15,6 +15,7 @@ Claude Code container storage is divided into modular XDG base directories:
 - **Runtime** (`$XDG_RUNTIME_DIR/claude-container`): Live sockets and temporary files.
 
 External skills are discoverable and mounted from:
+
 1. `$CONFIG_DIR/skills.conf`
 2. `CLAUDE_SKILLS_DIR` environment variable
 3. `--skills-dir <DIR>` CLI flag
@@ -48,4 +49,5 @@ External skills are discoverable and mounted from:
   - `docs/mounting.md`: Host mounts, custom `-m` mounts, and Git forwarding.
   - `docs/testing.md`: Testing with Podman-in-Podman (PinP) and argument passthrough.
 - `tests/test-pinp.sh` runs automated test suites for argument collection and PinP readiness.
+- `Containerfiles/Test` (image `:test`) bundles PinP + SELinux tooling and the `container-debug` skill; `scripts/test-env` (SELinux + a selinuxfs bind mount required — the `spc_t` domain cannot mount selinuxfs itself) sets up the nested fixture (ssh-agent + socat forwarder + policy checks) so the agent can debug the setup itself.
 - `debug.sh` provides host-side SELinux and socket diagnostics.

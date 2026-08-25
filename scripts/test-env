@@ -1,0 +1,308 @@
+#!/usr/bin/env bash
+
+set -eEuo pipefail
+
+# test-env - Set up the Podman-in-Podman testing environment inside the
+# claude-container:test image (Containerfiles/Test).
+#
+# The Test container plays the "host" of a nested setup. This script builds a
+# faithful host-side fixture that the nested container_t can be tested
+# against:
+#
+#   fixture ssh-agent  ->  socat forwarder (container_file_t)  <-  container_t
+#
+# mirroring the real pipeline in docs/ssh-agent-forwarding.md. The decisive
+# check is a throwaway nested container running `ssh-add -l` through the
+# forwarder.
+#
+# SELinux is a HARD REQUIREMENT: a container cannot enable the kernel
+# security module, it inherits the host kernel's state. If SELinux is not
+# active this script exits non-zero — the environment would be meaningless
+# (and silently skipping the label checks is how bad debug reports get
+# written).
+#
+#   ./scripts/test-env         set up (idempotent) and print a status report
+#   ./scripts/test-env --down  tear down the fixture agent, forwarder, test dir
+#
+# After setup, the report shows a ready-to-run `podman run ... ssh-add -l`
+# command that reproduces the container_t -> forwarder -> agent path.
+
+TEST_DIR="${CLAUDE_TEST_DIR:-/var/test/claude-container}"
+AGENT_SOCK="$TEST_DIR/agent.sock"
+AGENT_PIDFILE="$TEST_DIR/agent.pid"
+FORWARD_SOCK="$TEST_DIR/forward.sock"
+FORWARD_PIDFILE="$TEST_DIR/forward.pid"
+TEST_KEY="$TEST_DIR/testkey"
+
+log() {
+	echo "==> ${*}"
+}
+
+die() {
+	echo "ERROR: ${*}" >&2
+	exit 1
+}
+
+# Canonical host-side rule target: on a real host the socat forwarder runs in
+# the user session, i.e. unconfined_t. scripts/claude-container installs this
+# as the module below.
+CANONICAL_TARGET="unconfined_t"
+CANONICAL_MODULE="container_ssh_forward"
+
+# ---------------------------------------------------------------- helpers
+
+selinux_type_of() {
+	# Type field of a process's current SELinux context.
+	cut -d: -f3 <<<"$(cat /proc/$1/attr/current)"
+}
+
+module_for_target() {
+	# Module name for a connectto rule targeting a given server type.
+	if [[ "${1}" == "$CANONICAL_TARGET" ]]; then
+		printf '%s' "$CANONICAL_MODULE"
+	else
+		printf '%s_%s' "$CANONICAL_MODULE" "${1}"
+	fi
+}
+
+cil_install() {
+	# Install (allow container_t <target> (unix_stream_socket (connectto))).
+	# Same CIL content as ensure_selinux_policy in scripts/claude-container.
+	local target="${1}"
+	local cil_file="$TEST_DIR/$(module_for_target "$target").cil"
+
+	cat >"$cil_file" <<EOF
+(allow container_t ${target} (unix_stream_socket (connectto)))
+EOF
+	if command -v semodule >/dev/null 2>&1; then
+		semodule -i "$cil_file"
+	else
+		die "policy module $(module_for_target "$target") is not loaded and this image cannot compile/install CIL (Alpine ships no checkpolicy). Load it on the host, then rerun:
+  printf '%s' '(allow container_t ${target} (unix_stream_socket (connectto)))' | sudo semodule -i /dev/stdin"
+	fi
+}
+
+module_loaded() {
+	# True if a policy module of the exact given name is loaded.
+	if command -v semodule >/dev/null 2>&1; then
+		semodule -l 2>/dev/null | grep -qE "^${1}([[:space:]]|\$)"
+	elif command -v python3 >/dev/null 2>&1; then
+		# This Alpine image has no semodule binary (no checkpolicy package in
+		# the repo). Module names are NUL-terminated strings in the loaded
+		# policy blob — match name+terminator so a longer module name sharing
+		# a prefix (container_ssh_forward vs container_ssh_forward_spc_t)
+		# does not count.
+		python3 -c 'import sys
+sys.exit(0 if sys.argv[1].encode() + b"\0" in open("/sys/fs/selinux/policy", "rb").read() else 1)' "${1}"
+	else
+		# Last resort: fixed-string scan (substring caveat above; a false
+		# positive would surface as a denial in the decisive check).
+		grep -qaF -- "${1}" /sys/fs/selinux/policy
+	fi
+}
+
+ensure_connectto_rule() {
+	# Ensure container_t may connectto a unix_stream_socket whose SERVER
+	# process runs in type $1 (SELinux socket peer mediation — the target is
+	# the server's domain, not the socket file's label).
+	local target="${1}"
+	local module
+
+	module=$(module_for_target "$target")
+	if module_loaded "$module"; then
+		return 0
+	fi
+
+	log "Policy module ${module} missing, installing..."
+	cil_install "$target"
+}
+
+ensure_socket_label() {
+	# Ensure the socket's SELinux type is container_file_t (the peer-mediation
+	# target). NOTE: container rootfs storage (overlay/fuse-overlayfs) often
+	# refuses security.selinux writes (ENOTSUPP) — but files there are
+	# created already labeled container_file_t, so verify first, relabel only
+	# when possible, and fail only if the type is still wrong afterwards.
+	local sock="${1}"
+	local ctx type user level
+	ctx=$(getfilecon "$sock" | cut -f2)
+	type=$(cut -d: -f3 <<<"$ctx")
+	if [[ "$type" == "container_file_t" ]]; then
+		log "Forwarder socket already labeled ${ctx}"
+		return 0
+	fi
+	user="${ctx%%:*}"
+	level="${ctx##*:}"
+	setfilecon "${user}:object_r:container_file_t:${level}" "$sock" 2>/dev/null || true
+	type=$(getfilecon "$sock" | cut -f2 | cut -d: -f3)
+	[[ "$type" == "container_file_t" ]] || die "forwarder socket is labeled ${type}, not container_file_t, and relabeling failed on this filesystem — put the fixture on a host-mounted (ext4/xfs) path instead of the container rootfs"
+	log "Forwarder socket relabeled to container_file_t"
+}
+
+teardown() {
+	local pidfile
+	for pidfile in "$FORWARD_PIDFILE" "$AGENT_PIDFILE"; do
+		if [[ -f "$pidfile" ]]; then
+			local pid
+			pid=$(cat "$pidfile" 2>/dev/null || true)
+			[[ -n "${pid:-}" ]] && kill "$pid" 2>/dev/null || true
+		fi
+	done
+	rm -rf "$TEST_DIR"
+	log "Torn down: $TEST_DIR"
+}
+
+# ------------------------------------------------------------------ args
+
+case "${1:-}" in
+--down)
+	teardown
+	exit 0
+	;;
+-h | --help)
+	sed -n '5,28p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+	exit 0
+	;;
+"")
+	: ;;
+*)
+	die "unknown option: ${1} (see --help)"
+	;;
+esac
+
+# ---------------------------------------------------------------- setup
+
+command -v getfilecon >/dev/null 2>&1 || die "getfilecon not found — run inside the claude-container:test image"
+
+# selinuxfs backs the detection below and the module checks: mount it if the
+# container runtime did not provide it. NOTE: on an Enforcing host a
+# privileged container (spc_t domain) is generally NOT allowed to mount
+# selinuxfs itself — the runtime must provide the bind mount, e.g.
+# -v /sys/fs/selinux:/sys/fs/selinux.
+if ! mountpoint -q /sys/fs/selinux 2>/dev/null; then
+	mount -t selinuxfs none /sys/fs/selinux 2>/dev/null \
+		&& log "Mounted selinuxfs at /sys/fs/selinux"
+fi
+
+# Detect SELinux from selinuxfs itself. libselinux's selinuxenabled/getenforce
+# are unreliable in containers: the library's mount registry may never be
+# populated (observed: host Enforcing, yet "Disabled" behind a read-only
+# bind), which would misdiagnose a perfectly good setup.
+if [[ ! -f /sys/fs/selinux/enforce ]] || [[ ! -s /sys/fs/selinux/policy ]]; then
+	if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
+		die "SELinux appears active (selinuxenabled) but /sys/fs/selinux is not usable from this container — start the Test container with a selinuxfs bind mount (e.g. -v /sys/fs/selinux:/sys/fs/selinux)."
+	fi
+	die "SELinux is not active on the host kernel (no usable /sys/fs/selinux). A container cannot enable it — run the Test container on an SELinux system with a selinuxfs bind mount."
+fi
+
+if [[ "$(cat /sys/fs/selinux/enforce)" == "1" ]]; then
+	MODE="Enforcing"
+else
+	MODE="Permissive"
+fi
+log "SELinux mode: $MODE"
+if [[ "$MODE" != "Enforcing" ]]; then
+	echo "WARNING: mode is $MODE, not Enforcing — denials will not be enforced, label/policy checks remain valid." >&2
+fi
+
+# Nested podman storage: vfs is the reliable PinP driver.
+mkdir -p /etc/containers
+cat <<'EOF' >/etc/containers/storage.conf
+[storage]
+driver = "vfs"
+runroot = "/run/containers/storage"
+graphroot = "/var/lib/containers/storage"
+EOF
+log "Nested storage driver: vfs"
+
+mkdir -p "$TEST_DIR"
+
+# ------------------------------------------------- fixture ssh-agent
+
+running=false
+if [[ -S "$AGENT_SOCK" && -f "$AGENT_PIDFILE" ]] && kill -0 "$(cat "$AGENT_PIDFILE")" 2>/dev/null; then
+	running=true
+fi
+
+if $running; then
+	log "Fixture agent already running (pid $(cat "$AGENT_PIDFILE"))"
+else
+	rm -f "$AGENT_SOCK" "$AGENT_PIDFILE"
+	# Unset any inherited agent vars so ssh-agent starts a fresh fixture
+	# agent instead of reporting an existing one's environment.
+	agent_env=$(env -u SSH_AGENT_PID -u SSH_AUTH_SOCK ssh-agent -a "$AGENT_SOCK")
+	agent_pid=$(sed -n 's/^SSH_AGENT_PID=//p' <<<"$agent_env")
+	[[ -n "$agent_pid" ]] || die "ssh-agent did not report a PID"
+	echo "$agent_pid" >"$AGENT_PIDFILE"
+	log "Fixture agent started (pid $agent_pid, socket $AGENT_SOCK)"
+fi
+
+# A throwaway key in the fixture agent makes the end-to-end check
+# unambiguous: a successful run lists exactly this key.
+if [[ ! -f "$TEST_KEY" ]]; then
+	ssh-keygen -t ed25519 -N "" -q -f "$TEST_KEY"
+fi
+env SSH_AUTH_SOCK="$AGENT_SOCK" ssh-add "$TEST_KEY" >/dev/null 2>&1 || true
+
+# ------------------------------------------------- socat forwarder
+
+# The forwarder is the fixture stand-in for the launcher's socat. It runs in
+# THIS container's domain, which is the SELinux server domain that
+# container_t must be allowed to connectto.
+SELF_TYPE=$(selinux_type_of self)
+log "Test container domain: $SELF_TYPE"
+
+forward_running=false
+if [[ -S "$FORWARD_SOCK" && -f "$FORWARD_PIDFILE" ]] && kill -0 "$(cat "$FORWARD_PIDFILE")" 2>/dev/null; then
+	forward_running=true
+fi
+
+if $forward_running; then
+	log "Forwarder already running (pid $(cat "$FORWARD_PIDFILE"))"
+else
+	rm -f "$FORWARD_SOCK" "$FORWARD_PIDFILE"
+	socat "UNIX-LISTEN:$FORWARD_SOCK,mode=777,fork" "UNIX-CLIENT:$AGENT_SOCK" &>/dev/null &
+	forward_pid=$!
+	echo "$forward_pid" >"$FORWARD_PIDFILE"
+	# Wait for the socket to appear, then ensure the container_file_t label
+	# (the launcher does this with an explicit chcon; see ensure_socket_label
+	# for why we verify rather than force it).
+	for _ in $(seq 1 50); do
+		[[ -S "$FORWARD_SOCK" ]] && break
+		sleep 0.1
+	done
+	[[ -S "$FORWARD_SOCK" ]] || die "socat forwarder socket did not appear"
+	ensure_socket_label "$FORWARD_SOCK"
+	log "Forwarder started (pid $forward_pid, socket $FORWARD_SOCK)"
+fi
+
+# ------------------------------------------------- policy rules
+
+# The nested container_t connects to the forwarder, whose server process runs
+# in $SELF_TYPE. Ensure that connectto is allowed. Also keep the canonical
+# unconfined_t rule in sync (that is what real hosts need).
+ensure_connectto_rule "$SELF_TYPE"
+ensure_connectto_rule "$CANONICAL_TARGET"
+log "Policy rules verified (container_t connectto -> $SELF_TYPE, $CANONICAL_TARGET)"
+
+# ------------------------------------------------------------- report
+
+NESTED_IMAGE="docker.io/hyprhvn/claude-container:full"
+
+log "=== Test environment ready ==="
+log "  SELinux mode:                 $MODE"
+log "  Test container domain:        $SELF_TYPE"
+log "  fixture agent socket:         $AGENT_SOCK"
+log "  socat forwarder socket:       $FORWARD_SOCK (type container_file_t)"
+log "  storage driver:               vfs"
+log
+log "Decisive end-to-end check (nested container_t -> forwarder -> agent):"
+log
+log "  podman run --rm --entrypoint ssh-add \\"
+log "    -v '$FORWARD_SOCK:/root/.ssh/agent.sock:z' \\"
+log "    -e SSH_AUTH_SOCK=/root/.ssh/agent.sock \\"
+log "    $NESTED_IMAGE -l"
+log
+log "Expected: the test key is listed. 'Operation not permitted' is an SELinux"
+log "denial (policy rule or socket label); 'No such file or directory' means"
+log "the forwarder is not running."

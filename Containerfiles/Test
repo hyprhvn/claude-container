@@ -1,11 +1,26 @@
-# syntax=docker/dockerfile:1
-
 FROM docker.io/hyprhvn/claude-container:full
 # add PinP tooling for self-testing to the Full container
 
 # tools to run podman in podman
-RUN --mount=type=cache,target=/var/cache/apk \
-    apk add \
-        podman \
-        fuse-overlayfs \
-        shadow
+RUN apk update && apk add --no-cache \
+    podman \
+    fuse-overlayfs \
+    shadow
+
+# SELinux inspection (getfilecon/setfilecon/getenforce from libselinux-utils).
+# NOTE: Alpine's semodule-utils only ships the semodule_* helpers — NOT the
+# semodule binary — and the repo has no checkpolicy package, so this image
+# cannot load policy modules itself. scripts/test-env checks modules via the
+# /sys/fs/selinux/policy blob and points to a host-side `semodule -i`.
+RUN apk add --no-cache \
+    libselinux-utils \
+    semodule-utils
+
+# In this image claude runs directly (not via the launcher), so it reads
+# /root/.claude from the image: bake in the default instructions, the
+# container rule, and the container-debug skill (skel/test/ holds assets
+# that only the Test image uses, so general skel seeding skips them).
+# Build context must be the repository root: podman build -f Containerfiles/Test .
+COPY skel/config/CLAUDE.md /root/.claude/CLAUDE.md
+COPY skel/config/rules/ /root/.claude/rules/
+COPY skel/test/skills/ /root/.claude/skills/

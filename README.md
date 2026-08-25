@@ -23,15 +23,20 @@ Comprehensive documentation for all subsystems is available in the [`docs/`](doc
 
 Build and push the OCI images with:
 
+Run all builds from the repository root (the build context, needed by `Containerfiles/Test`):
+
 ```bash
 # log in to docker hub
 podman login -u hyprhvn docker.io
 # build the base container
-podman build -f Containerfiles/Base -t docker.io/hyprhvn/claude-container:base
+podman build -f Containerfiles/Base -t docker.io/hyprhvn/claude-container:base .
 podman push docker.io/hyprhvn/claude-container:base
 # build the full dev container
-podman build -f Containerfiles/Full -t docker.io/hyprhvn/claude-container:full
+podman build -f Containerfiles/Full -t docker.io/hyprhvn/claude-container:full .
 podman push docker.io/hyprhvn/claude-container:full
+# build the test/self-debug container (PinP + SELinux tooling)
+podman build -f Containerfiles/Test -t docker.io/hyprhvn/claude-container:test .
+podman push docker.io/hyprhvn/claude-container:test
 ```
 
 ## Directory Architecture & XDG Specification
