@@ -38,6 +38,7 @@ VERBOSE=false # TODO use this: https://stackoverflow.com/a/8756552/5994623
 MOUNTS=()
 EXTRA_SKILLS_DIRS=()
 CONTAINER_ARGS=()
+CONTAINER_TAG=full
 
 # -v arguments assembled at runtime by add_mount and add_dir_mounts
 MOUNT_ARGS=()
@@ -94,6 +95,10 @@ OPTIONS
                                  --privileged, --device=/dev/fuse). May be
                                  specified multiple times.
 
+        -t, --tag TAG            the tag of the container to start. Defaults to
+								 "full", use "test" for testing and "base" for
+								 minimal setup.
+
     Positional Arguments
 
         DIR                      the directory in which claude should work
@@ -149,6 +154,15 @@ get_opts() {
 			fi
 			shift
 			CONTAINER_ARGS+=("${1}")
+			;;
+		-t | --tag)
+			if [[ $# -lt 2 ]]; then
+				echo -e "Missing argument for ${argument}\n"
+				usage
+				exit 2
+			fi
+			shift
+			CONTAINER_TAG="${1}"
 			;;
 		--) # separator: all subsequent arguments are positionals / claude args
 			shift
@@ -531,7 +545,7 @@ run_claude() {
 		"${SSH_ARGS[@]}" \
 		"${MOUNT_ARGS[@]}" \
 		"${CONTAINER_ARGS[@]}" \
-		docker.io/hyprhvn/claude-container:full \
+		"docker.io/hyprhvn/claude-container:$CONTAINER_TAG" \
 		"${CLAUDE_ARGS[@]}"
 }
 
