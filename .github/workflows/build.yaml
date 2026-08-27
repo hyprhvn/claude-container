@@ -44,4 +44,4 @@ jobs:
           context: .
           file: Containerfiles/Full
           push: true
-          tags: docker.io/hyprhvn/claude-container:base  # ${{ steps.vars.outputs.image_tag }}
+          tags: docker.io/hyprhvn/claude-container:full  # ${{ steps.vars.outputs.image_tag }}
