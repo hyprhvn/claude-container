@@ -31,17 +31,24 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push
+      - name: Build and push Base
         uses: docker/build-push-action@v5
         with:
           context: .
           file: Containerfiles/Base
           push: true
           tags: docker.io/hyprhvn/claude-container:base  # ${{ steps.vars.outputs.image_tag }}
-      - name: Build and push
+      - name: Build and push Full
         uses: docker/build-push-action@v5
         with:
           context: .
           file: Containerfiles/Full
           push: true
           tags: docker.io/hyprhvn/claude-container:full  # ${{ steps.vars.outputs.image_tag }}
+      - name: Build and push Test
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Containerfiles/Test
+          push: true
+          tags: docker.io/hyprhvn/claude-container:test  # ${{ steps.vars.outputs.image_tag }}
