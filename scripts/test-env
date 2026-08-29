@@ -78,7 +78,9 @@ EOF
 		semodule -i "$cil_file"
 	else
 		die "policy module $(module_for_target "$target") is not loaded and this image cannot compile/install CIL (Alpine ships no checkpolicy). Load it on the host, then rerun:
-  printf '%s' '(allow container_t ${target} (unix_stream_socket (connectto)))' | sudo semodule -i /dev/stdin"
+  printf '%s' '(allow container_t ${target} (unix_stream_socket (connectto)))' > /tmp/$(module_for_target "$target").cil
+  sudo semodule -i /tmp/$(module_for_target "$target").cil
+NOTE: install from a named file — test-env detects modules by name, so a module loaded via semodule -i /dev/stdin (named after its input source) is invisible to it."
 	fi
 }
 
@@ -125,6 +127,9 @@ ensure_socket_label() {
 	# when possible, and fail only if the type is still wrong afterwards.
 	local sock="${1}"
 	local ctx type user level
+	# getfilecon prints "name<TAB>context"; cut -f2 (tab-delimited) yields the
+	# context. (Verified empirically — even single-file output carries the
+	# name prefix.)
 	ctx=$(getfilecon "$sock" | cut -f2)
 	type=$(cut -d: -f3 <<<"$ctx")
 	if [[ "$type" == "container_file_t" ]]; then
@@ -160,7 +165,7 @@ case "${1:-}" in
 	exit 0
 	;;
 -h | --help)
-	sed -n '5,28p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+	sed -n '/^# test-env -/,/^$/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 	exit 0
 	;;
 "")
@@ -171,8 +176,6 @@ case "${1:-}" in
 esac
 
 # ---------------------------------------------------------------- setup
-
-command -v getfilecon >/dev/null 2>&1 || die "getfilecon not found — run inside the claude-container:test image"
 
 # selinuxfs backs the detection below and the module checks: mount it if the
 # container runtime did not provide it. NOTE: on an Enforcing host a
@@ -204,6 +207,12 @@ log "SELinux mode: $MODE"
 if [[ "$MODE" != "Enforcing" ]]; then
 	echo "WARNING: mode is $MODE, not Enforcing — denials will not be enforced, label/policy checks remain valid." >&2
 fi
+
+# Tooling gate, AFTER the SELinux gate: detection above is tool-free, so the
+# "SELinux is not active" hard-fail is identical in every non-SELinux
+# environment regardless of installed packages (tests/test-pinp.sh asserts
+# on that message).
+command -v getfilecon >/dev/null 2>&1 || die "getfilecon not found — run inside the claude-container:test image"
 
 # Nested podman storage: vfs is the reliable PinP driver.
 mkdir -p /etc/containers
@@ -306,3 +315,4 @@ log
 log "Expected: the test key is listed. 'Operation not permitted' is an SELinux"
 log "denial (policy rule or socket label); 'No such file or directory' means"
 log "the forwarder is not running."
+

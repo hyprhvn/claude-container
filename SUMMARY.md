@@ -29,8 +29,7 @@ environment inside the container (fixture ssh-agent + socat forwarder + SELinux 
 | `CLAUDE.md` | One line under Testing & Diagnostics. |
 | `tests/test-pinp.sh` | Side-effect-free sanity checks (syntax, `--help`, skill wiring) + deterministic hard-fail contract test in non-SELinux environments. |
 
-`debug.sh` remains deleted in the working tree (user's own in-flight change — do not commit it
-as part of this work). `Containerfiles/Test` was the user's draft, extended as above.
+`Containerfiles/Test` was the user's draft, extended as above.
 
 ## Commands to run on the host (SELinux Fedora)
 
@@ -39,12 +38,17 @@ as part of this work). `Containerfiles/Test` was the user's draft, extended as a
    podman build -f Containerfiles/Test -t docker.io/hyprhvn/claude-container:test .
    ```
 2. **Pre-load the policy modules** (the Test image cannot compile CIL — no
-   `checkpolicy`/`semodule` in the Alpine repo; see findings below):
+   `checkpolicy`/`semodule` in the Alpine repo; see findings below). Install
+   from **named files** matching `test-env`'s module-name check
+   (`module_for_target`): a module loaded via `semodule -i /dev/stdin` is
+   named after its input source and stays invisible to it:
    ```bash
-   printf '%s\n' \
-     '(allow container_t spc_t (unix_stream_socket (connectto)))' \
-     '(allow container_t unconfined_t (unix_stream_socket (connectto)))' \
-     | sudo semodule -i /dev/stdin
+   printf '%s' '(allow container_t spc_t (unix_stream_socket (connectto)))' \
+     > /tmp/container_ssh_forward_spc_t.cil
+   printf '%s' '(allow container_t unconfined_t (unix_stream_socket (connectto)))' \
+     > /tmp/container_ssh_forward.cil
+   sudo semodule -i /tmp/container_ssh_forward_spc_t.cil
+   sudo semodule -i /tmp/container_ssh_forward.cil
    ```
 3. **Start privileged + rootful** (rootful needed so the host-side
    `semodule -i` can load policy; the **selinuxfs bind is required** — the

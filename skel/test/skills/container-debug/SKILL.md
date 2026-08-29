@@ -66,10 +66,14 @@ Check in this order:
    grep -qaF container_ssh_forward /sys/fs/selinux/policy && echo loaded
    ```
    This image cannot compile/install CIL — if the module is missing, load
-   it on the host (rootful) and rerun:
+   it on the host (rootful) and rerun. Install from a **named file** —
+   test-env detects modules by name, so a module loaded via
+   `semodule -i /dev/stdin` (named after its input source) is invisible to
+   it:
    ```bash
    printf '%s' '(allow container_t spc_t (unix_stream_socket (connectto)))' \
-     | sudo semodule -i /dev/stdin
+     > /tmp/container_ssh_forward_spc_t.cil
+   sudo semodule -i /tmp/container_ssh_forward_spc_t.cil
    ```
 2. **Forwarder socket label** — must be type `container_file_t` (`:z` mount
    options do NOT relabel a live Unix socket). Coreutils `ls -lZ` is not
@@ -100,7 +104,7 @@ collection), run the repository's launcher nested against the fixture agent:
 ```bash
 SSH_AUTH_SOCK=/var/test/claude-container/agent.sock \
 XDG_RUNTIME_DIR=/var/test/claude-container/runtime \
-./scripts/claude-container <workspace> -p "reply with: ok"
+./scripts/claude-container <workspace> -p "Run ssh-add -l in a shell and reply with its exact output"
 ```
 
 ## What each signal means
