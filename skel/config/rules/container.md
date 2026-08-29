@@ -19,9 +19,32 @@ The following tools and runtimes are pre-installed in the container environment:
 ### Compilers & Runtimes
 
 - **C/C++:** `build-base`, `musl-dev`
-- **Python:** `python3`, `py3-pip`
-- **JavaScript:** `nodejs`, `npm`
+- **Python:** `python3`, `py3-pip`, `uv`
+- **JavaScript & TypeScript:** `nodejs`, `npm`, `typescript`
+- **Java:** OpenJDK 25, `maven`, `gradle`
 - **Rust:** `rust`, `cargo`
+
+### Language Servers (LSP)
+
+- **Bash:** `bash-language-server`
+- **C/C++:** `clangd` (via `clang-extra-tools`)
+- **Go:** `gopls`
+- **Java:** `jdtls`
+- **Python:** `pylsp` (`py3-lsp-server`)
+- **Rust:** `rust-analyzer`
+- **TypeScript / JavaScript:** `typescript-language-server`
+
+### Linters & Formatters
+
+- **Shell:** `shellcheck`, `shfmt`
+- **C/C++:** `clang-format`, `clang-tidy`, `cppcheck`
+- **Go:** `golangci-lint`
+- **Java:** Typically invoked via `mvn` or `gradle` plugins
+- **Markdown:** `markdownlint` (`markdownlint-cli`)
+- **Python:** `ruff` (via `uv`)
+- **Rust:** `rustfmt`, `cargo-clippy` (`rust-clippy`)
+- **Web / TS / JS:** `eslint`, `prettier`
+- **YAML:** `yamllint`
 
 ### Documentation, Diagramming & Headless Browser
 
