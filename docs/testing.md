@@ -85,7 +85,7 @@ EOF
 `Containerfiles/Test` builds the image `docker.io/hyprhvn/claude-container:test`: the Full container plus the tools to run and debug the whole setup **from inside the container** (Podman-in-Podman, no host access needed):
 
 - **PinP tooling:** `podman`, `fuse-overlayfs`, `shadow`, `iptables` (nested netavark needs it for bridge networking; `--network none` containers skip it)
-- **SELinux tooling:** `libselinux-utils` (`getfilecon`, `setfilecon`, `getenforce`, `selinuxenabled`, …) — note the Alpine gaps: no `chcon` and **no `semodule` binary** (the `semodule-utils` package ships only the `semodule_*` helpers, and the repo has no `checkpolicy` package). Consequences: `test-env` verifies socket labels with `getfilecon`/`setfilecon`, checks policy modules by scanning the `/sys/fs/selinux/policy` blob, and — since it cannot compile CIL — tells you to load missing modules on the host (rootful `semodule -i`). The behavioral end-to-end check remains the ground truth.
+- **SELinux tooling:** `libselinux-utils` (`getfilecon`, `setfilecon`, `getenforce`, `selinuxenabled`, …) — note the Alpine gaps: no `chcon` and **no `semodule` binary** (the `semodule-utils` package ships only the `semodule_*` helpers, and the repo has no `checkpolicy` package). Consequences: `test-env` verifies socket labels with `getfilecon`/`setfilecon`, and — since it cannot compile CIL **and** module names are not stored in the merged kernel policy blob (`/sys/fs/selinux/policy` holds the merged `POLICY_KERN`; checkpolicy writes name+version only for module files) — it cannot verify policy modules at all; it prints the host-side `semodule -i` command instead. The behavioral end-to-end check remains the ground truth.
 
 ### 3.1 Setting Up the Environment (`scripts/test-env`)
 
@@ -108,13 +108,33 @@ podman run -it --rm --privileged \
 `test-env` is the testing-environment setup and a **hard gate**:
 
 1. **SELinux is required.** A container cannot enable the kernel security module — it inherits the host kernel's state. It detects SELinux from `/sys/fs/selinux` directly (enforce file + non-empty policy), **not** from `selinuxenabled` — the library's mount registry is unreliable in containers (observed: host Enforcing, yet "Disabled" behind a read-only bind). If no usable SELinux is found, `test-env` exits non-zero. (Permissive mode is accepted with a warning; denials simply won't be enforced.)
-2. Uses `selinuxfs` for detection and module checks — it mounts it if the runtime didn't provide it, but in practice the runtime must supply the bind (see above).
+2. Uses `selinuxfs` for detection — it mounts it if the runtime didn't provide it, but in practice the runtime must supply the bind (see above).
 3. Writes the nested `storage.conf` with the `vfs` driver.
 4. Builds the host-side fixture: a **fixture `ssh-agent`** (stand-in for the host user's agent, e.g. GNOME Keyring, holding a throwaway key) plus a **`socat` forwarder socket** of type `container_file_t` — the same pipeline as the real launcher. It verifies the socket's type (and relabels only when the filesystem allows it — container rootfs storage often refuses `security.selinux` writes, though files there are created already labeled `container_file_t`).
 5. Verifies the policy via socket **peer mediation**: the nested container connects to the forwarder, whose *server process* runs in the Test container's domain (e.g. `spc_t`), so the exercised rule is `(allow <nested-domain> <that-domain> (unix_stream_socket (connectto)))`. Observed: with the Test container in `spc_t` (rootless or `--privileged` launch — the usual modes) the nested container is also `spc_t`, so the check exercises the base-policy-allowed `spc_t → spc_t` self-connect; the production tuple (container → host forwarder in `unconfined_t`) cannot be reproduced in-container and remains a host-side concern. The modules are **not verifiable from inside the image** (no semodule/checkpolicy, and module names are not stored in the merged kernel policy blob that `/sys/fs/selinux/policy` holds — checkpolicy writes name+version only for module files), so `test-env` prints a NOTE with the host-side install command instead of gating; the decisive `ssh-add -l` check is the ground truth. Load modules on the host from **named files** (e.g. `container_ssh_forward[_<domain>].cil`) so they can be listed and managed with `semodule`.
 6. Prints a status report including a ready-to-run `podman run ... ssh-add -l` command that is the decisive end-to-end check.
 
 `./scripts/test-env --down` tears the fixture down.
+
+**Gotchas** (from the in-container verification runs):
+
+- **First run pulls the image** — the decisive check's nested `podman run`
+  pulls `docker.io/hyprhvn/claude-container:full` into the nested vfs
+  storage the first time; plan for a multi-minute pull.
+- **The image's `ENTRYPOINT` is `claude`** — the decisive command therefore
+  overrides it with `--entrypoint ssh-add` (the report prints the full
+  command ready to run).
+- **The fixture lives in `/var/test/claude-container/`** (override with
+  `CLAUDE_TEST_DIR`), deliberately *not* in the launcher's
+  `$XDG_RUNTIME_DIR/claude-container` — the nested launcher cleans up its
+  own runtime directory on exit, which would kill the fixture.
+- **`:z` does not relabel a live Unix socket** — the explicit
+  `chcon`/`setfilecon` to `container_file_t` is what grants access.
+- **Diagnostics inside the image:** `dmesg` is usually blocked by the
+  host's `dmesg_restrict` (even `--privileged`); coreutils `ls -lZ` is not
+  built with SELinux support — use `getfilecon`. Read denials from
+  `/sys/fs/selinux/avc/messages` (may not exist, depending on host audit
+  configuration — then the host's audit log is the only source).
 
 ### 3.2 Letting the Agent Debug Itself
 

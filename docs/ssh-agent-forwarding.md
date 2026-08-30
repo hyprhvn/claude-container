@@ -65,6 +65,21 @@ type=AVC msg=audit(...): avc: denied { connectto } for pid=... comm="ssh-add"
 
 > **Note on `container_connect_any`:** The SELinux boolean `container_connect_any` only governs network TCP/UDP sockets (`tcp_socket` / `udp_socket`). It has no effect on Unix domain sockets (`unix_stream_socket`).
 
+### Which domain is the container actually in?
+
+The analysis above uses `container_t` — the domain of a **rootful, non-privileged** container. The required `connectto` rule follows the container's *actual* domain (peer mediation is between the client process domain and the server process domain):
+
+| Launch mode | Container domain | Required rule |
+| --- | --- | --- |
+| Rootful, non-privileged | `container_t` | `allow container_t unconfined_t (unix_stream_socket (connectto))` — the `container_ssh_forward` module installed by the launcher |
+| Rootful `--privileged`, or **rootless** | `spc_t` | `allow spc_t unconfined_t (unix_stream_socket (connectto))` |
+
+Rootless Podman containers run as `spc_t` (the "super privileged container" type) from the host's SELinux perspective, because their "root" is only a mapped user. On current Fedora, the base policy already covers the `spc_t` case with a wildcard — `allow unconfined_domain_type domain:unix_stream_socket { … connectto … }` (verified with `sesearch`) — so no extra module is needed. If a rootless deployment is denied anyway, check:
+
+```bash
+sesearch -A -s spc_t -t unconfined_t -c unix_stream_socket -p connectto
+```
+
 ## 3. Evaluated Solutions & Why Option 1 Was Chosen
 
 ### Option 2 (Ruled Out): Transitioning `socat` to `container_t` (`runcon`)
@@ -126,4 +141,4 @@ semodule -l | grep container_ssh_forward
 
 ### Self-contained test environment (no host access needed)
 
-The `claude-container:test` image (`Containerfiles/Test`) plus `scripts/test-env` reproduce the full setup inside a Podman-in-Podman environment — fixture SSH agent, socat forwarder, SELinux policy checks — and the agent can debug it in place. The Test container must be started `--privileged` **with a selinuxfs bind mount** (`-v /sys/fs/selinux:/sys/fs/selinux:ro` — the `spc_t` domain cannot mount selinuxfs itself; ro suffices because the image never writes selinuxfs), and the `connectto` module(s) must be loaded on the host first (the image cannot compile CIL). See [Testing](testing.md) and the `container-debug` skill.
+The `claude-container:test` image (`Containerfiles/Test`) plus `scripts/test-env` reproduce the full setup inside a Podman-in-Podman environment — fixture SSH agent, socat forwarder, SELinux policy checks — and the agent can debug it in place. The Test container must be started `--privileged` **with a selinuxfs bind mount** (`-v /sys/fs/selinux:/sys/fs/selinux:ro` — the `spc_t` domain cannot mount selinuxfs itself; ro suffices because the image never writes selinuxfs), and the `connectto` rule must be present on the host (base policy or module — the image itself cannot compile CIL; see §2). See [Testing](testing.md) and the `container-debug` skill.
