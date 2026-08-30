@@ -50,4 +50,3 @@ External skills are discoverable and mounted from:
   - `docs/testing.md`: Testing with Podman-in-Podman (PinP) and argument passthrough.
 - `tests/test-pinp.sh` runs automated test suites for argument collection and PinP readiness.
 - `Containerfiles/Test` (image `:test`) bundles PinP + SELinux tooling and the `container-debug` skill; `scripts/test-env` (SELinux + a selinuxfs bind mount required — the `spc_t` domain cannot mount selinuxfs itself) sets up the nested fixture (ssh-agent + socat forwarder + policy checks) so the agent can debug the setup itself.
-- `debug.sh` provides host-side SELinux and socket diagnostics.
