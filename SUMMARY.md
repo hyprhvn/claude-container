@@ -127,6 +127,59 @@ have selinuxfs at all. The `:ro` bind is sufficient for the whole flow (see step
 an earlier "use rw" recommendation was premature — the in-container module-load path
 it would enable does not exist on Alpine.
 
+## Second test run (2026-08-30, in `:test` container) — module check is a dead end
+
+`test-env` ran the full setup successfully (Enforcing, `spc_t`, fixture
+agent + forwarder socket already `container_file_t`) and correctly stopped
+at the policy gate: the host modules were not preloaded. While verifying
+the gate, finding 7:
+
+7. **The policy-blob module scan can never work.** Module names are not
+   part of the merged kernel policy: checkpolicy/libsepol
+   (`policydb_write` in libsepol `write.c`) writes name+version **only for
+   `POLICY_MOD` files**, while `/sys/fs/selinux/policy` holds the merged
+   `POLICY_KERN` — verified empirically: no candidate module name appears
+   in the 3.9 MB blob, and even built-in symbol names are stored there
+   **without** a terminator, as `[len][hash][type][x][name]` entries. So
+   finding 2's NUL-terminated scan was wrong twice over (wrong location
+   AND wrong encoding) — an always-false check. (`semodule -l` works
+   because it lists the on-disk policy *store*, not the kernel blob.)
+   **Fix:** `ensure_connectto_rule` no longer gates inside the Test image:
+   it prints a NOTE with the host-side named-file install command and
+   leaves verification to the decisive nested `ssh-add -l` check (ground
+   truth). The `semodule -l` branch is kept for environments that have the
+   binary.
+
+The decisive check then ran and **passed** — the throwaway fixture key was
+listed end-to-end under Enforcing. Remaining findings from the run:
+
+8. **The nested container is not `container_t`.** With the Test container in
+   `spc_t` (rootless launch — `uid_map 0→1000` — or `--privileged`, both the
+   usual modes here) the nested podman container also runs in `spc_t`
+   (observed with default flags and `--userns=host`), so the decisive check
+   exercised the `spc_t → spc_t` self-connect, which the base policy allows
+   — it passed with **no preloaded module**. The design-time
+   `container_t → spc_t` tuple only appears under a `container_t` Test
+   container, which this setup does not use. The *production* tuple
+   (container → host forwarder in `unconfined_t`) is not reproducible
+   in-container (no `unconfined_t` process exists inside); it stays a
+   host-side concern.
+9. **Nested podman needs `iptables`** (netavark bridge networking): the
+   first decisive run died with `netavark: iptables: No such file or
+   directory`. Fixed: `iptables` added to `Containerfiles/Test`, and the
+   decisive command uses `--network none` (ssh over a Unix socket needs no
+   network; also works in the pre-fix image).
+10. **`/sys/fs/selinux/avc/messages` may not exist** (host audit
+    configuration — absent on this host), so the skill's denial-reading step
+    notes the host-side audit log/dmesg fallback.
+11. **Latent production note (RESOLVED 2026-08-30):** the project's
+    deployment mode is rootless, so the real container's domain is `spc_t`
+    and the production rule is `spc_t → unconfined_t` — while the launcher's
+    `ensure_selinux_policy` installs the `container_t → unconfined_t` rule.
+    Host `sesearch` confirmed the base policy already covers it:
+    `allow unconfined_domain_type domain:unix_stream_socket { … connectto … }`
+    — the production tuple is allowed, no extra module needed on this host.
+
 ## After host verification — remaining work
 
 1. ~~Run `bash tests/test-pinp.sh`~~ — done in-container (2026-08-25), green; the

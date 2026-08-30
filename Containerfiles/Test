@@ -1,11 +1,13 @@
 FROM docker.io/hyprhvn/claude-container:full
 # add PinP tooling for self-testing to the Full container
 
-# tools to run podman in podman
+# tools to run podman in podman. iptables: the nested netavark needs it for
+# default bridge networking (a --network none container skips it entirely).
 RUN apk update && apk add --no-cache \
     podman \
     fuse-overlayfs \
-    shadow
+    shadow \
+    iptables
 
 # SELinux inspection (getfilecon/setfilecon/getenforce from libselinux-utils).
 # NOTE: Alpine's semodule-utils only ships the semodule_* helpers — NOT the

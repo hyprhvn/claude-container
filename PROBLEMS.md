@@ -1,10 +1,15 @@
 # PROBLEMS — `test/self-contained-pinp-debug` (commit 92070d2)
 
-Review verdict: blockers **A1/A2 and all doc/nit fixes applied** (2026-08-29);
-`tests/test-pinp.sh` green in-container both with and without
-`libselinux-utils` installed. Remaining before merge: **B1/B2** — the host-side
-verification flow (build `:test`, named-module preload, decisive `ssh-add -l`),
-then re-review and merge.
+Review verdict: **all in-container verification done** (2026-08-29/30).
+A1/A2 + doc/nit fixes applied; B1 (decisive nested `ssh-add -l`) **passed**
+in the `:test` container (both `--network none` and default bridge
+networking after `iptables` was added); B2 (module scan) root-caused as a
+dead end and redesigned (NOTE + ground-truth check instead of an impossible
+gate); production note (SUMMARY finding 11) **resolved** by host
+`sesearch` — base policy allows `unconfined_domain_type → domain`
+unix_stream_socket connectto, covering `spc_t → unconfined_t`.
+`tests/test-pinp.sh` green in all three environment combinations.
+Remaining: host-side rebuild of `:test` (picks up `iptables`), rebase + merge.
 
 ## A. Functional issues (blockers)
 
@@ -76,18 +81,24 @@ container with the selinuxfs bind (takes the "SELinux active" branch at
 
 ## B. Open verification (already flagged in SUMMARY.md — keep as TODOs)
 
-- **B1. The decisive nested `ssh-add -l` run has never been executed**
-  (SUMMARY: "After host verification — remaining work"). Watch item: the decisive
-  command binds the forwarder socket with `:z`. If podman deems the current label ≠
-  target label, the relabel setxattrs `security.selinux` on the overlay rootfs →
-  `ENOTSUPP` (SUMMARY finding 3) → `podman run` fails *before* `ssh-add` ever
-  runs. Mitigation if observed: drop `:z` from the decisive command (the socket is
-  already `container_file_t`; file access is by type, connect is by peer mediation).
-- **B2. The NUL-terminated name scan of the policy blob is a format inference, not
-  yet confirmed by a true positive** — no run has yet observed a loaded module via
-  `module_loaded()` (`scripts/test-env:85-105`). TODO: after fixing A1, confirm the
-  scan returns true for both preloaded modules, and sanity-probe it against any
-  known-loaded module name (visible via host `semodule -l`).
+- **B1. (done 2026-08-30) The decisive nested `ssh-add -l` check passed** —
+  the fixture key was listed end-to-end under Enforcing. The `:z` relabel
+  watch item did not materialize (no relabel error). Two fixes were needed
+  along the way: `--network none` (nested netavark required `iptables`,
+  absent from the image — now added to `Containerfiles/Test`) and the
+  domain caveat below (SUMMARY findings 8–11): the nested container runs in
+  `spc_t`, so the check exercised `spc_t → spc_t` (base-policy-allowed)
+  rather than the design-time `container_t → spc_t` tuple.
+- **B2. (root-caused 2026-08-30, fixed) The policy-blob module scan can never
+  work.** Module names are not stored in the merged kernel policy
+  (`/sys/fs/selinux/policy` holds `POLICY_KERN`; checkpolicy writes
+  name+version only for `POLICY_MOD` files — libsepol `write.c`
+  `policydb_write`), and even the symbol names that ARE in the blob are
+  stored terminator-less as `[len][hash][type][x][name]` (verified
+  empirically against this host's 3.9 MB blob). The old NUL-terminated
+  scan was an always-false check. `ensure_connectto_rule` now warns (with
+  the host-side named-file command) instead of gating inside the Test
+  image; the decisive `ssh-add -l` check is the ground truth.
 
 ## C. Doc fixes
 

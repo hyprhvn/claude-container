@@ -37,9 +37,21 @@ observable and fixable in place — no host access needed.
 ## 2. Run the decisive check
 
 Execute the `podman run --entrypoint ssh-add ... -l` command printed in the
-report. It starts a nested `container_t` container connecting through the
-forwarder — the exact production path (container → `container_file_t`
-socket → socat → agent).
+report. It starts a nested podman container connecting through the
+forwarder — the same socket pipeline as production (container →
+`container_file_t` socket → socat → agent).
+
+**Domain caveat:** the nested container's domain follows the Test
+container's domain. Observed: with the Test container in `spc_t` (rootless
+launch, or `--privileged` — both the usual modes for this setup) the nested
+container also runs in `spc_t`, so the check exercises the `spc_t → spc_t`
+self-connect (allowed by the base policy — it passes without any preloaded
+module). A `container_t` nested container only appears under a `container_t`
+Test container, which this setup does not use. The *production* tuple
+(container → host forwarder in `unconfined_t`) cannot be reproduced
+in-container at all — no `unconfined_t` process exists inside the container;
+that rule stays a host-side concern (the launcher's
+`ensure_selinux_policy` on a real host).
 
 - **The test key is listed** → the full SELinux/forwarding path works.
 - **`Operation not permitted`** → SELinux denial; go to step 3.
@@ -48,6 +60,11 @@ socket → socat → agent).
 - **Nested podman fails to start** → storage issue; check
   `/etc/containers/storage.conf` (must be `driver = "vfs"`), and that the
   `full` image is available to the nested podman.
+- **Nested podman fails with `netavark: iptables: No such file or
+  directory`** → the image predates the `iptables` package (needed for
+  nested bridge networking). The decisive check works around it with
+  `--network none`; a full nested run that needs networking can pass
+  `-C --network host` to the launcher instead.
 
 ## 3. Diagnose (on failure)
 
@@ -59,17 +76,16 @@ Check in this order:
    container's domain, e.g. `spc_t`), **not** the socket file's label:
    ```bash
    cat /proc/self/attr/current   # the expected server domain
-   # module check — the Alpine image has no semodule binary (no checkpolicy
-   # package in the repo); module names are strings in the loaded policy
-   # blob (substring match — it also hits the _spc_t variant, so read the
-   # result against the domain you actually need):
-   grep -qaF container_ssh_forward /sys/fs/selinux/policy && echo loaded
    ```
-   This image cannot compile/install CIL — if the module is missing, load
-   it on the host (rootful) and rerun. Install from a **named file** —
-   test-env detects modules by name, so a module loaded via
-   `semodule -i /dev/stdin` (named after its input source) is invisible to
-   it:
+   Modules **cannot be verified from inside the Test container**: the
+   image has no semodule/checkpolicy, and module names are not part of
+   the merged kernel policy blob (`/sys/fs/selinux/policy`) — checkpolicy
+   writes name+version only for module files, not the merged policy the
+   kernel holds (`semodule -l` lists the on-disk policy store, not the
+   blob). The ground truth is the decisive `ssh-add -l` check: a denial
+   (`Operation not permitted`) means the rule is missing — load it on the
+   host (rootful, from a **named file** so it can be listed/managed with
+   `semodule`) and rerun:
    ```bash
    printf '%s' '(allow container_t spc_t (unix_stream_socket (connectto)))' \
      > /tmp/container_ssh_forward_spc_t.cil
@@ -95,6 +111,9 @@ Check in this order:
    ```bash
    cat /sys/fs/selinux/avc/messages | tail -20
    ```
+   If `avc/messages` does not exist (host audit configuration), read the
+   denials from the host's audit log/dmesg instead — from inside the
+   container this step is simply unavailable.
 
 ## 4. Full nested run (optional, heavier)
 
@@ -115,6 +134,6 @@ XDG_RUNTIME_DIR=/var/test/claude-container/runtime \
 | `ssh-add -l` → `No such file or directory` | socat forwarder not running |
 | nested podman never starts | storage driver not `vfs`, or `full` image not available |
 | `test-env` fails "SELinux is not active" | host kernel without SELinux (cannot be fixed from inside) — or selinuxfs not mounted/visible: the `spc_t` domain may not mount it itself, so add the `-v /sys/fs/selinux:/sys/fs/selinux` bind |
-| `test-env` fails "cannot compile/install CIL" | this image has no checkpolicy/`semodule` — load the module on the host (rootful) and rerun |
+| `test-env` NOTEs a module "cannot be verified" | expected in the Test image — modules are not verifiable in-container; run the decisive `ssh-add -l` check, which is the ground truth |
 
 Full theory of the forwarding design: `docs/ssh-agent-forwarding.md`.

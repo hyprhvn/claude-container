@@ -53,7 +53,11 @@ CANONICAL_MODULE="container_ssh_forward"
 
 selinux_type_of() {
 	# Type field of a process's current SELinux context.
-	cut -d: -f3 <<<"$(cat /proc/$1/attr/current)"
+	# /proc/<pid>/attr/current is NUL-terminated; tr drops the byte so the
+	# substitution below does not warn.
+	local ctx
+	ctx=$(tr -d '\0' </proc/"$1"/attr/current)
+	cut -d: -f3 <<<"$ctx"
 }
 
 module_for_target() {
@@ -68,39 +72,14 @@ module_for_target() {
 cil_install() {
 	# Install (allow container_t <target> (unix_stream_socket (connectto))).
 	# Same CIL content as ensure_selinux_policy in scripts/claude-container.
+	# Only callable where the semodule binary exists (outside the Test image).
 	local target="${1}"
 	local cil_file="$TEST_DIR/$(module_for_target "$target").cil"
 
 	cat >"$cil_file" <<EOF
 (allow container_t ${target} (unix_stream_socket (connectto)))
 EOF
-	if command -v semodule >/dev/null 2>&1; then
-		semodule -i "$cil_file"
-	else
-		die "policy module $(module_for_target "$target") is not loaded and this image cannot compile/install CIL (Alpine ships no checkpolicy). Load it on the host, then rerun:
-  printf '%s' '(allow container_t ${target} (unix_stream_socket (connectto)))' > /tmp/$(module_for_target "$target").cil
-  sudo semodule -i /tmp/$(module_for_target "$target").cil
-NOTE: install from a named file — test-env detects modules by name, so a module loaded via semodule -i /dev/stdin (named after its input source) is invisible to it."
-	fi
-}
-
-module_loaded() {
-	# True if a policy module of the exact given name is loaded.
-	if command -v semodule >/dev/null 2>&1; then
-		semodule -l 2>/dev/null | grep -qE "^${1}([[:space:]]|\$)"
-	elif command -v python3 >/dev/null 2>&1; then
-		# This Alpine image has no semodule binary (no checkpolicy package in
-		# the repo). Module names are NUL-terminated strings in the loaded
-		# policy blob — match name+terminator so a longer module name sharing
-		# a prefix (container_ssh_forward vs container_ssh_forward_spc_t)
-		# does not count.
-		python3 -c 'import sys
-sys.exit(0 if sys.argv[1].encode() + b"\0" in open("/sys/fs/selinux/policy", "rb").read() else 1)' "${1}"
-	else
-		# Last resort: fixed-string scan (substring caveat above; a false
-		# positive would surface as a denial in the decisive check).
-		grep -qaF -- "${1}" /sys/fs/selinux/policy
-	fi
+	semodule -i "$cil_file" || die "semodule -i failed for module $(module_for_target "$target")"
 }
 
 ensure_connectto_rule() {
@@ -109,14 +88,31 @@ ensure_connectto_rule() {
 	# the server's domain, not the socket file's label).
 	local target="${1}"
 	local module
-
 	module=$(module_for_target "$target")
-	if module_loaded "$module"; then
+
+	if command -v semodule >/dev/null 2>&1; then
+		# Outside the Test image: authoritative check + install.
+		if semodule -l 2>/dev/null | grep -qE "^${module}([[:space:]]|\$)"; then
+			return 0
+		fi
+		log "Policy module ${module} missing, installing..."
+		cil_install "$target"
 		return 0
 	fi
 
-	log "Policy module ${module} missing, installing..."
-	cil_install "$target"
+	# Inside the Test image: NOT verifiable, so do not gate on it. This
+	# image ships no semodule/checkpolicy, and module names are not part of
+	# the merged kernel policy — checkpolicy writes name+version only for
+	# POLICY_MOD files, while /sys/fs/selinux/policy holds the merged
+	# POLICY_KERN (verified empirically: no module name appears in the
+	# blob at all; even built-in symbol names are stored there
+	# terminator-less as [len][hash][type][x][name] entries). The decisive
+	# nested ssh-add -l check in the report is the ground truth.
+	echo "NOTE: policy module ${module} (allow container_t ${target} (unix_stream_socket (connectto)))" >&2
+	echo "      cannot be verified from inside the Test container. If the decisive" >&2
+	echo "      ssh-add -l check is denied, load it on the host (named file) and rerun:" >&2
+	echo "      printf '%s' '(allow container_t ${target} (unix_stream_socket (connectto)))' > /tmp/${module}.cil" >&2
+	echo "      sudo semodule -i /tmp/${module}.cil" >&2
 }
 
 ensure_socket_label() {
@@ -239,8 +235,10 @@ else
 	rm -f "$AGENT_SOCK" "$AGENT_PIDFILE"
 	# Unset any inherited agent vars so ssh-agent starts a fresh fixture
 	# agent instead of reporting an existing one's environment.
+	# NOTE: ssh-agent prints "SSH_AGENT_PID=<pid>; export SSH_AGENT_PID;" —
+	# capture only the numeric PID.
 	agent_env=$(env -u SSH_AGENT_PID -u SSH_AUTH_SOCK ssh-agent -a "$AGENT_SOCK")
-	agent_pid=$(sed -n 's/^SSH_AGENT_PID=//p' <<<"$agent_env")
+	agent_pid=$(sed -n 's/^SSH_AGENT_PID=\([0-9][0-9]*\).*$/\1/p' <<<"$agent_env")
 	[[ -n "$agent_pid" ]] || die "ssh-agent did not report a PID"
 	echo "$agent_pid" >"$AGENT_PIDFILE"
 	log "Fixture agent started (pid $agent_pid, socket $AGENT_SOCK)"
@@ -292,7 +290,11 @@ fi
 # unconfined_t rule in sync (that is what real hosts need).
 ensure_connectto_rule "$SELF_TYPE"
 ensure_connectto_rule "$CANONICAL_TARGET"
-log "Policy rules verified (container_t connectto -> $SELF_TYPE, $CANONICAL_TARGET)"
+if command -v semodule >/dev/null 2>&1; then
+	log "Policy rules verified (container_t connectto -> $SELF_TYPE, $CANONICAL_TARGET)"
+else
+	log "Policy rules: not verifiable in-container (see NOTEs above) — the decisive ssh-add -l check is the ground truth"
+fi
 
 # ------------------------------------------------------------- report
 
@@ -305,9 +307,10 @@ log "  fixture agent socket:         $AGENT_SOCK"
 log "  socat forwarder socket:       $FORWARD_SOCK (type container_file_t)"
 log "  storage driver:               vfs"
 log
-log "Decisive end-to-end check (nested container_t -> forwarder -> agent):"
+log "Decisive end-to-end check (nested container -> forwarder -> agent):"
 log
 log "  podman run --rm --entrypoint ssh-add \\"
+log "    --network none \\"
 log "    -v '$FORWARD_SOCK:/root/.ssh/agent.sock:z' \\"
 log "    -e SSH_AUTH_SOCK=/root/.ssh/agent.sock \\"
 log "    $NESTED_IMAGE -l"
