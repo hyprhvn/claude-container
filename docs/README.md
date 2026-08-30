@@ -9,15 +9,14 @@ This directory contains comprehensive technical documentation for the `claude-co
    - Rootless Podman execution and user namespaces.
    - Base (`Containerfiles/Base`) and Full (`Containerfiles/Full`) image layers.
    - Build, push, and container lifecycles.
-2. **[XDG Storage Specification & Directory Layout](xdg-storage.md)**
-   - Modular breakdown of Claude Code's storage into standard XDG Base Directories:
-     - **Config:** `~/.config/claude-container`
-     - **State:** `~/.local/state/claude-container`
-     - **Cache:** `~/.cache/claude-container`
-     - **Data:** `~/.local/share/claude-container`
-     - **Runtime:** `/run/user/$UID/claude-container`
+2. **[Unified Storage Layout](storage-layout.md)**
+   - The single unified `claude-container` directory
+     (`~/.local/opt/claude-container`, `CLAUDE_CONTAINER_DIR` override) and
+     why one directory replaced the XDG split.
    - Mapping rules to container `/root/.claude/...` target paths.
-   - Mount modes (`rw,z`, `ro,z`).
+   - Mount modes (`rw,z` parent, `ro,z` instruction/executable trees).
+   - The `skel/` template set and provenance-tracked one-time seeding via
+     `scripts/update-skel` (full reference).
 3. **[SSH Agent Forwarding & SELinux Configuration](ssh-agent-forwarding.md)**
    - Socket forwarding pipeline using `socat`.
    - The SELinux peer mediation problem on Unix domain stream sockets (`unix_stream_socket connectto`).
@@ -30,16 +29,12 @@ This directory contains comprehensive technical documentation for the `claude-co
    - Configuration methods: `skills.conf`, `CLAUDE_SKILLS_DIR` env var, and `--skills-dir` CLI flag.
    - Single-skill vs multi-skill bundle auto-detection.
    - GNU Stow symlink resolution.
-5. **[Migration & Initialization Guide](migration.md)**
-   - Migrating from monolithic `~/.claude` and `~/.claude.json` using `scripts/migrate-from-home`.
-   - Dry-run preview mode (`--dry-run`), non-destructive copy mode (`--copy`), and automated backups.
-   - Fresh installation and zero-config directory scaffolding.
-6. **[Host Mounts & Git Forwarding](mounting.md)**
+5. **[Host Mounts & Git Forwarding](mounting.md)**
    - Custom bind mounts via `-m/--mount` syntax.
    - Read-only Git configuration forwarding (`.gitconfig` and `.config/git`).
    - GNU Stow symlink traversal with `add_dir_mounts`.
    - SELinux `:z` volume relabeling and the `$HOME` boundary safety restriction.
-7. **[Testing & Podman-in-Podman (PinP)](testing.md)**
+6. **[Testing & Podman-in-Podman (PinP)](testing.md)**
    - Container argument passthrough (`-C`, `--container-arg`).
    - Claude trailing arguments forwarding.
    - Podman-in-Podman (PinP) testing requirements and outer container setup.

@@ -1,8 +1,38 @@
 # Host Mounts & Git Forwarding
 
-This document explains how host directories, custom bind mounts, and Git identity configurations are securely forwarded into `claude-container`.
+This document explains how host directories, custom bind mounts, the unified Claude directory, and Git identity configurations are securely forwarded into `claude-container`.
 
-## 1. Custom Host Mounts (`-m` / `--mount`)
+## 1. The Unified Claude Directory Mount
+
+The launcher's `collect_claude_mounts()` mounts the unified directory
+`${CLAUDE_CONTAINER_DIR:-$HOME/.local/opt/claude-container}` (see
+[Unified Storage Layout](storage-layout.md)):
+
+1. **The whole directory** at `/root/.claude` with `rw,z` — everything
+   Claude writes persists, including state directories it creates itself.
+2. **`claude.json`** at `/root/.claude.json` with `rw,z` (file mount).
+3. **The instruction/executable trees** — `rules/`, `agents/`, `hooks/`,
+   `themes/`, `output-styles/`, `workflows/`, `commands/` — at
+   `/root/.claude/<same>` with `ro,z`. A container able to write there could
+   plant rules, agents, or hooks that the next session loads, so the nested
+   read-only mounts hide the write access (the more specific mount wins).
+
+### `-m` Precedence: Overriding a Built-in Mount
+
+`-m/--mount` mounts are collected **after** the built-in ones, and in
+`podman run` a later `-v` for the same target wins. That is the sanctioned
+escape hatch for development iteration, e.g. to test a hook without touching
+the read-only `hooks/` tree:
+
+```bash
+claude-container -m "$PWD/dev-hooks:/root/.claude/hooks:z"
+```
+
+For that one run, the scratch directory shadows the `ro` hooks mount (and
+with the default `:z` option it is writable). The same trick works for any
+other built-in target.
+
+## 2. Custom Host Mounts (`-m` / `--mount`)
 
 `claude-container` supports mounting additional host paths using standard Podman syntax: `<from>:<to>[:<options>]`.
 
@@ -30,7 +60,7 @@ claude-container -m /sys/fs/selinux:/sys/fs/selinux:ro
 
 When handling `-m/--mount`, `collect_mounts()` mounts the specified path directly as a single unit (rather than recursively expanding directory entries). This prevents pseudo-filesystems (like `/sys` or `/proc`) or large hierarchies from turning into hundreds of individual file mounts.
 
-## 2. Git Configuration & Identity Forwarding
+## 3. Git Configuration & Identity Forwarding
 
 To ensure Git commits created by Claude Code inside the container have the correct user name, email, and signing configuration, `collect_git_config()` dynamically mounts the host's Git configuration.
 
@@ -65,7 +95,7 @@ To solve this, `add_dir_mounts()` performs entry-by-entry resolution:
 3. **Safety Check:** Skips any entry whose real path falls outside both the directory root and `$HOME` to prevent stray symlinks from exposing unintended host files.
 4. Mounts each resolved file directly to its relative path in `/root/.config/git/<relative-path>` with `ro,z`.
 
-## 3. SELinux Relabeling (`:z` vs `:Z`) & `$HOME` Boundary
+## 4. SELinux Relabeling (`:z` vs `:Z`) & `$HOME` Boundary
 
 ### Why `:z` is Used
 

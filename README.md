@@ -1,6 +1,6 @@
 # claude-container
 
-A containerized version of claude-code with rootless Podman, strict SELinux compatibility, SSH agent forwarding, modular XDG directory layout, and external skills support.
+A containerized version of claude-code with rootless Podman, strict SELinux compatibility, SSH agent forwarding, a single unified storage directory that persists everything, and external skills support.
 
 > [!important]
 >
@@ -12,10 +12,9 @@ A containerized version of claude-code with rootless Podman, strict SELinux comp
 Comprehensive documentation for all subsystems is available in the [`docs/`](docs/README.md) directory:
 
 - [Architecture & Containerization Overview](docs/architecture.md)
-- [XDG Storage Specification & Directory Layout](docs/xdg-storage.md)
+- [Unified Storage Layout](docs/storage-layout.md)
 - [SSH Agent Forwarding & SELinux Policy](docs/ssh-agent-forwarding.md)
 - [External Skills Management](docs/skills.md)
-- [Migration & Initialization Guide](docs/migration.md)
 - [Host Mounts & Git Configuration Forwarding](docs/mounting.md)
 - [Testing & Podman-in-Podman (PinP)](docs/testing.md)
 
@@ -39,39 +38,42 @@ podman build -f Containerfiles/Test -t docker.io/hyprhvn/claude-container:test .
 podman push docker.io/hyprhvn/claude-container:test
 ```
 
-## Directory Architecture & XDG Specification
+## Directory Layout
 
-Claude Code files and state are partitioned according to the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir/latest).
-Default locations can be overwritten using the `XDG_` env vars from the spec.
+All of Claude Code's files and state live in **one directory** on the host:
 
-The directories are mounted directly to the locations Claude expects in the container:
-
-| Category    | Default Host Path                 | Contents                                                                                                                                 |
-| ----------- | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| **Config**  | `~/.config/claude-container`      | `CLAUDE.md`, `settings.json`, `rules/`, `themes/`, `output-styles/`, `agents/`, `workflows/`, `commands/`, `skills/`, `keybindings.json` |
-| **State**   | `~/.local/state/claude-container` | `claude.json` (OAuth/trust/preferences), `agent-memory/`                                                                                 |
-| **Cache**   | `~/.cache/claude-container`       | `projects/` (Session history & auto-memory indices/topics)                                                                               |
-| **Data**    | `~/.local/share/claude-container` | External & imported skills data (`skills/`)                                                                                              |
-| **Runtime** | `/run/user/$UID/claude-container` | SSH socket forwarder (`/root/.ssh/agent.sock` -- `mode=0700`)                                                                            |
-
-## Setup & Migration
-
-### Migrating Existing `~/.claude` Configuration
-
-If you have an existing legacy `~/.claude` directory or `~/.claude.json` file, run the migration script:
-
-```bash
-# Preview what will be moved/created without modifying files
-./scripts/migrate-from-home --dry-run
-
-# Run migration (creates an automatic timestamped backup in ~/.claude.backup.<timestamp>)
-./scripts/migrate-from-home
-
-# Or copy instead of moving
-./scripts/migrate-from-home --copy
+```text
+$CC_DIR = ${CLAUDE_CONTAINER_DIR:-$HOME/.local/opt/claude-container}
 ```
 
-If starting fresh without existing configuration, running `scripts/migrate-from-home` initializes the XDG directory structure and seeds starter templates from `skel/` (including default global instructions `CLAUDE.md` and container environment rules `rules/container.md`). When launching `scripts/claude-container`, missing directories and a minimal `claude.json` state are automatically ensured.
+It is mounted read-write as the container's `/root/.claude`, so **everything** Claude writes persists — config, `claude.json`, session history, auto-memory, plugins, and any state directory Claude grows later. The instruction/executable trees (`rules/`, `agents/`, `hooks/`, `themes/`, `output-styles/`, `workflows/`, `commands/`) are re-mounted read-only on top, so a container cannot plant instructions or executables for the next session. Full spec: [Unified Storage Layout](docs/storage-layout.md).
+
+| Host (`$CC_DIR/…`)   | Container               | Mode   |
+| -------------------- | ----------------------- | ------ |
+| (whole directory)    | `/root/.claude`         | `rw,z` |
+| `claude.json`        | `/root/.claude.json`    | `rw,z` |
+| the `ro` trees¹      | `/root/.claude/<same>`  | `ro,z` |
+| `runtime/agent.sock` | `/root/.ssh/agent.sock` | `z`    |
+
+¹ `rules/`, `agents/`, `hooks/`, `themes/`, `output-styles/`,
+`workflows/`, `commands/`
+
+## Setup
+
+The launcher scaffolds the unified directory structure and a minimal
+`claude.json` automatically on first run. The starter templates (global
+instructions `CLAUDE.md`, `settings.json` with statusline + `SessionStart`
+hook wiring, container rule `rules/container.md`, `hooks/`,
+`statusline.sh`) are seeded by a **one-time install step**, run once from a
+repository checkout:
+
+```bash
+/path/to/claude-container/scripts/update-skel --seed
+```
+
+Seeding is provenance-tracked (see [Unified Storage
+Layout](docs/storage-layout.md)); the launcher itself neither seeds nor
+migrates anything.
 
 ## Usage
 
@@ -100,10 +102,11 @@ Run Claude Code in the current workspace:
 You can import skills from external repositories or private folders without modifying submodules:
 
 1. **Config File (`skills.conf`):**
-   Add directory paths (one per line) to `${XDG_CONFIG_HOME:-~/.config}/claude-container/skills.conf`:
+   Add directory paths (one per line) to `$CC_DIR/skills.conf`
+   (`~/.local/opt/claude-container/skills.conf` by default):
 
    ```text
-   # ~/.config/claude-container/skills.conf
+   # ~/.local/opt/claude-container/skills.conf
    /home/user/src/my-private-skills
    ```
 
@@ -123,4 +126,18 @@ You can import skills from external repositories or private folders without modi
 
 ## Install
 
-Place `scripts/claude-container` and `scripts/migrate-from-home` in a directory on your `$PATH` (e.g. `~/.local/bin/`).
+The launcher is self-contained: copy `scripts/claude-container` into a
+directory on your `$PATH` (e.g. `~/.local/bin/`). It only needs the unified
+directory (created automatically) — no other files.
+
+`scripts/update-skel` is run from the repository (or anywhere it sits next
+to `skel/`; set `CLAUDE_CONTAINER_SKEL` to point at the templates if you
+move it). It is the one-time setup, and the later template refresh:
+
+```bash
+# one-time: seed the starter templates into the unified directory
+/path/to/claude-container/scripts/update-skel --seed
+
+# later, when the repository's skel/ changes: refresh the templates
+/path/to/claude-container/scripts/update-skel --update
+```

@@ -1,14 +1,14 @@
 # Architecture & Containerization Overview
 
-`claude-container` encapsulates [Claude Code](https://claude.com/product/claude-code) within a rootless [Podman](https://podman.io/) container. This architecture guarantees strong isolation, reproducibility, strict SELinux compliance, and modular data management according to the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir/latest).
+`claude-container` encapsulates [Claude Code](https://claude.com/product/claude-code) within a rootless [Podman](https://podman.io/) container. This architecture guarantees strong isolation, reproducibility, strict SELinux compliance, and a single unified on-disk storage directory that persists everything Claude writes.
 
 ## 1. High-Level Architecture
 
 The host runner (`scripts/claude-container`) acts as an orchestration and configuration engine that:
 
 1. Resolves host paths and parses user arguments.
-2. Scaffolds modular XDG directory structures on the host.
-3. Sets up dynamic mounts for Git identity, user configuration, persistent state, caches, and custom skills.
+2. Scaffolds the unified `claude-container` directory on the host and seeds missing `skel/` templates.
+3. Sets up dynamic mounts for Git identity, the unified Claude directory (read-write parent, read-only instruction/executable trees), and external skills.
 4. Manages a host-side `socat` bridge for SSH agent forwarding across SELinux boundaries.
 5. Launches Claude Code inside rootless Podman as an interactive container.
 
@@ -18,14 +18,12 @@ The host runner (`scripts/claude-container`) acts as an orchestration and config
                       |                                                 |
   User Terminal ----> | scripts/claude-container                        |
                       |   |                                             |
-                      |   +-- XDG Base Directories:                     |
-                      |   |     ~/.config/claude-container              |
-                      |   |     ~/.local/state/claude-container         |
-                      |   |     ~/.cache/claude-container               |
-                      |   |     ~/.local/share/claude-container         |
+                      |   +-- Unified storage directory:                |
+                      |   |     ~/.local/opt/claude-container           |
+                      |   |       (CLAUDE_CONTAINER_DIR override)       |
                       |   |                                             |
                       |   +-- SSH Agent Forwarder (socat):              |
-                      |   |     $SSH_AUTH_SOCK -> /run/user/$UID/...    |
+                      |   |     $SSH_AUTH_SOCK -> $CC_DIR/runtime/...   |
                       |   |     (SELinux CIL module: container_ssh_fwd) |
                       |   |                                             |
                       |   v                                             |
@@ -43,7 +41,7 @@ The host runner (`scripts/claude-container`) acts as an orchestration and config
                       |   Target: /root/.ssh/agent.sock                 |
                       |   Target: /root/.gitconfig                      |
                       |                                                 |
-                      |   Process: claude (Alpine Linux 3.20)           |
+                      |   Process: claude (Alpine Linux 3.24)           |
                       +-------------------------------------------------+
 ```
 
@@ -66,7 +64,7 @@ The container environment is split into two layers defined in `Containerfiles/`:
 
 ### Base Image (`Containerfiles/Base`)
 
-- **Base OS:** Alpine Linux 3.20.
+- **Base OS:** Alpine Linux 3.24.
 - **Package Repository:** Official Anthropic Alpine repository (`https://downloads.claude.ai/claude-code/apk/stable`) signed with Anthropic's RSA public key (`https://downloads.claude.ai/keys/claude-code.rsa.pub`).
 - **Installed Package:** `claude-code`.
 - **Working Directory:** `/workspace`.
@@ -105,8 +103,7 @@ podman push docker.io/hyprhvn/claude-container:full
 
 For detailed documentation on specific subsystems, refer to:
 
-- [XDG Storage Specification](xdg-storage.md) — Directory partitioning, persistence, and mount mapping.
-- [Host Mounts & Git Forwarding](mounting.md) — CLI `-m/--mount` syntax, GNU Stow resolution, and Git configuration.
+- [Unified Storage Layout](storage-layout.md) — The single `claude-container` directory, mount mapping, and `update-skel` template management.
+- [Host Mounts & Git Forwarding](mounting.md) — Unified directory mounts, `-m/--mount` syntax and precedence, GNU Stow resolution, and Git configuration.
 - [SSH Agent Forwarding & SELinux](ssh-agent-forwarding.md) — Peer mediation, CIL policy, and socat architecture.
 - [External Skills Management](skills.md) — `skills.conf`, environment variables, multi-skill bundles, and CLI flags.
-- [Migration & Initialization](migration.md) — Migration from monolithic `~/.claude` using `scripts/migrate-from-home`.

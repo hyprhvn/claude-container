@@ -62,7 +62,7 @@ To run a nested test container from the host:
 podman run --rm -it --privileged \
     -v "$PWD:/test-workspace:z" \
     -w /test-workspace \
-    alpine:3.20 sh
+    alpine:3.24 sh
 
 # Inside the outer container, install required packages:
 apk add bash podman fuse-overlayfs shadow socat coreutils git
@@ -126,8 +126,8 @@ podman run -it --rm --privileged \
   command ready to run).
 - **The fixture lives in `/var/test/claude-container/`** (override with
   `CLAUDE_TEST_DIR`), deliberately *not* in the launcher's
-  `$XDG_RUNTIME_DIR/claude-container` — the nested launcher cleans up its
-  own runtime directory on exit, which would kill the fixture.
+  `$CC_DIR/runtime` — the nested launcher cleans up its own runtime
+  directory on exit, which would kill the fixture.
 - **`:z` does not relabel a live Unix socket** — the explicit
   `chcon`/`setfilecon` to `container_file_t` is what grants access.
 - **Diagnostics inside the image:** `dmesg` is usually blocked by the
@@ -145,11 +145,12 @@ baked into the image at `/root/.claude/skills/container-debug/`.
 
 **Caveat — the launcher shadows it.** When you start the Test container
 through `scripts/claude-container` (rather than raw `podman run`), the
-launcher bind-mounts the host's `$XDG_CONFIG_HOME/claude-container/skills/`
-over `/root/.claude/skills/`, hiding the baked skill (and the baked
-`CLAUDE.md`/`rules/`). A raw `podman run` has no such mount, so the skill is
-visible there. To use it through the launcher, copy it into the workspace
-first (`cp -r skel/test/skills/container-debug <workspace>/.claude/skills/`).
+launcher bind-mounts the host's unified directory (`$CC_DIR`) read-write
+over `/root/.claude/`, hiding everything baked into the image
+(`CLAUDE.md`, `rules/`, the container-debug skill). A raw `podman run` has
+no such mount, so the skill is visible there. To use it through the
+launcher, copy it into the workspace first
+(`cp -r skel/test/skills/container-debug <workspace>/.claude/skills/`).
 Ask for it directly:
 
 ```bash
@@ -159,9 +160,31 @@ claude -p "Use the container-debug skill to verify the SSH agent forwarding setu
 
 ## 4. Automated Test Suite (`tests/test-pinp.sh`)
 
-The automated script [`tests/test-pinp.sh`](../tests/test-pinp.sh) validates:
+The automated script [`tests/test-pinp.sh`](../tests/test-pinp.sh) runs
+entirely against a temporary `CLAUDE_CONTAINER_DIR` and a fake `$HOME`
+(no Podman required for the storage tests) and validates:
 
-- Option parsing for basic (`-h`, `-v`, `-q`), advanced (`-m`, `--skills-dir`, `-C/--container-arg`), and positional arguments.
-- Verification that container arguments appear before the image name in `podman run`.
-- Verification that Claude trailing arguments appear after the image name in `podman run`.
-- Isolated XDG directory layout and external skills mounting from `skills.conf`.
+- **Syntax:** `bash -n` for all three scripts, plus `shellcheck` when
+  available.
+- **One-time seeding:** `update-skel --seed` on a clean environment seeds
+  the full `skel/` set (including `settings.json`, `statusline.sh`,
+  `hooks/`) and writes `.skel-manifest.tsv`; `skel/test/` is never seeded.
+- **Non-destructive re-seeding:** an existing user file survives a
+  re-run.
+- **`update-skel` semantics:** manifest hash correctness; idempotent,
+  silent re-seed; modified destinations survive `--seed`/`--update`;
+  skel-template refresh via a temporary `CLAUDE_CONTAINER_SKEL` copy
+  (`--seed` refuses, `--update` refreshes); `--force <path>` restores and
+  leaves a `.bak` sidecar; bare `--force` forces all tracked files; stow
+  symlinks are never replaced and lose their manifest entry; `--dry-run`
+  leaves the tree byte-identical.
+- **Unified mounts:** after the one-time install-time seed, a mock
+  `podman` run on a clean `CLAUDE_CONTAINER_DIR` captures the `rw,z` parent
+  mount, the `claude.json` file mount, all seven `ro,z`
+  instruction/executable tree submounts, and per-skill `ro,z` mounts from
+  `skills.conf`.
+- **Argument passthrough:** container arguments (`-C`) before the image
+  name, Claude trailing arguments after it, `-m` custom mounts, `-w`
+  workspace, and the literal `--` separator.
+- **`test-env` sanity:** syntax, `--help`, the baked `container-debug`
+  skill, and the SELinux hard-fail contract.

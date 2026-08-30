@@ -6,15 +6,19 @@ Claude Code supports custom capabilities called [skills](https://code.claude.com
 
 Skills are loaded into the container at `/root/.claude/skills` from multiple sources:
 
+`$CC_DIR` is the unified claude-container directory
+(`${CLAUDE_CONTAINER_DIR:-$HOME/.local/opt/claude-container}`, see
+[Unified Storage Layout](storage-layout.md)).
+
 ```
 +-------------------------------------------------------------------------+
 | Host Sources                                                            |
 |                                                                         |
 | 1. Local User Skills:                                                   |
-|    ~/.config/claude-container/skills/           -> (rw,z)               |
+|    $CC_DIR/skills/                            -> (rw,z, via parent)     |
 |                                                                         |
 | 2. External Skills Config File:                                         |
-|    ~/.config/claude-container/skills.conf       -> (ro,z per skill)     |
+|    $CC_DIR/skills.conf                        -> (ro,z per skill)       |
 |                                                                         |
 | 3. Environment Variable:                                                |
 |    CLAUDE_SKILLS_DIR=/path/a:/path/b            -> (ro,z per skill)     |
@@ -35,21 +39,33 @@ Skills are loaded into the container at `/root/.claude/skills` from multiple sou
 
 ### Method 1: Configuration File (`skills.conf`)
 
-You can define persistent paths to external skill repositories in `$CONFIG_DIR/skills.conf` (`~/.config/claude-container/skills.conf`).
+You can define persistent paths to external skill repositories in
+`$CC_DIR/skills.conf` (`~/.local/opt/claude-container/skills.conf` by
+default).
 
 - One path per line.
 - Supports tilde (`~`) expansion to the user's home directory.
 - Blank lines and comment lines (starting with `#`) are ignored.
 
-**Example `~/.config/claude-container/skills.conf`:**
+**Example `$CC_DIR/skills.conf` (a `claude-skills` style repository):**
 
 ```text
-# Custom private skills repository
-~/src/private-claude-skills
+# First-party skills of the repo (multi-skill bundle)
+~/Desktop/hyprhvn/claude-skills/skills
 
-# Shared team skills
-/opt/engineering/claude-skills
+# External bundles, one source per line
+~/Desktop/hyprhvn/claude-skills/external/anthropic/skills
+~/Desktop/hyprhvn/claude-skills/external/mattpocock/skills
+~/Desktop/hyprhvn/claude-skills/external/superpowers/skills
+~/Desktop/hyprhvn/claude-skills/external/gsd-core/skills
+
+# A repo that is a single skill (SKILL.md at its root)
+~/Desktop/hyprhvn/claude-skills/external/gstack
 ```
+
+Note the last line: a source directory that itself contains a `SKILL.md` is
+mounted as one skill under its directory name (see below), so point at the
+skill's root rather than at a parent that would only wrap it.
 
 ### Method 2: Environment Variable (`CLAUDE_SKILLS_DIR`)
 
@@ -105,10 +121,10 @@ Each subdirectory is individually mounted as `/root/.claude/skills/<subdir-name>
 
 Claude Code supports two related but distinct extension mechanisms, and `claude-container` seeds one of them by default:
 
-- **Rules (`~/.claude/rules/`):** Plain Markdown instruction files loaded **ambiently into context on every startup** (unless a `paths:` frontmatter key restricts them to specific files). They are the right place for always-relevant environmental context. `migrate-from-home` seeds a default `rules/container.md` describing the Alpine container environment and the catalog of pre-installed CLI tools, so the agent always knows what it is running in.
+- **Rules (`~/.claude/rules/`):** Plain Markdown instruction files loaded **ambiently into context on every startup** (unless a `paths:` frontmatter key restricts them to specific files). They are the right place for always-relevant environmental context. The skel seeding (via `scripts/update-skel`, run once during setup) installs a default `rules/container.md` describing the Alpine container environment and the catalog of pre-installed CLI tools, so the agent always knows what it is running in.
 - **Skills (`~/.claude/skills/`):** Packaged capabilities (a `SKILL.md` plus optional `references/`, `scripts/`) that are **activated on demand** via tool selection or invocation. They conserve context tokens because their full body is not loaded up front, but they must be explicitly triggered.
 
-Because the container environment and available tooling are relevant to *every* task, they ship as a default **rule** (seeded from `skel/`) rather than a skill. If you prefer the tooling catalog to be opt-in instead, convert `rules/container.md` into a skill under `$CONFIG_DIR/skills/container/SKILL.md` and remove the rule.
+Because the container environment and available tooling are relevant to *every* task, they ship as a default **rule** (seeded from `skel/`) rather than a skill. If you prefer the tooling catalog to be opt-in instead, convert `rules/container.md` into a skill under `$CC_DIR/skills/container/SKILL.md` and remove the rule.
 
 ## 5. Symlink Resolution & GNU Stow Compatibility
 

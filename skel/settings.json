@@ -1,0 +1,18 @@
+{
+	"statusLine": {
+		"type": "command",
+		"command": "/root/.claude/statusline.sh"
+	},
+	"hooks": {
+		"SessionStart": [
+			{
+				"hooks": [
+					{
+						"type": "command",
+						"command": "/root/.claude/hooks/session-start.sh"
+					}
+				]
+			}
+		]
+	}
+}

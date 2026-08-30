@@ -23,6 +23,6 @@ RUN apk add --no-cache \
 # container rule, and the container-debug skill (skel/test/ holds assets
 # that only the Test image uses, so general skel seeding skips them).
 # Build context must be the repository root: podman build -f Containerfiles/Test .
-COPY skel/config/CLAUDE.md /root/.claude/CLAUDE.md
-COPY skel/config/rules/ /root/.claude/rules/
+COPY skel/CLAUDE.md /root/.claude/CLAUDE.md
+COPY skel/rules/ /root/.claude/rules/
 COPY skel/test/skills/ /root/.claude/skills/

@@ -14,7 +14,7 @@ The forwarding pipeline consists of:
    socat "UNIX-LISTEN:$RUNTIME_DIR/agent.sock,mode=777,fork" "UNIX-CLIENT:$SSH_AUTH_SOCK" &
    ```
 
-2. **SELinux Inode Relabeling:** The temporary socket `/run/user/$UID/claude-container/agent.sock` is relabeled to `container_file_t`:
+2. **SELinux Inode Relabeling:** The temporary socket `$CC_DIR/runtime/agent.sock` (i.e. `~/.local/opt/claude-container/runtime/agent.sock` by default) is relabeled to `container_file_t`:
 
    ```bash
    chcon -t container_file_t "$RUNTIME_DIR/agent.sock"
@@ -57,7 +57,7 @@ This results in an AVC denial in `/var/log/audit/audit.log`:
 
 ```
 type=AVC msg=audit(...): avc: denied { connectto } for pid=... comm="ssh-add"
-    path="/run/user/1000/claude-container/agent.sock"
+    path="/home/user/.local/opt/claude-container/runtime/agent.sock"
     scontext=system_u:system_r:container_t:s0:c286,c442
     tcontext=unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023
     tclass=unix_stream_socket permissive=0
@@ -135,7 +135,7 @@ $ ssh-add -l
 SSH operations (including `git push` and `git fetch` over SSH) will function without permission errors. Inspect the forwarder socket label on the host:
 
 ```bash
-ls -lZ "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/claude-container/agent.sock"   # expect container_file_t
+ls -lZ "${CLAUDE_CONTAINER_DIR:-$HOME/.local/opt/claude-container}/runtime/agent.sock"   # expect container_file_t
 semodule -l | grep container_ssh_forward
 ```
 
