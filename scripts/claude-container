@@ -340,7 +340,7 @@ collect_claude_mounts() {
 	add_mount "$CC_DIR" "/root/.claude" "rw,z"
 	add_mount "$CC_DIR/claude.json" "/root/.claude.json" "rw,z"
 
-	local ro_dirs=(
+	local ro_paths=(
 		"rules"
 		"agents"
 		"hooks"
@@ -348,10 +348,11 @@ collect_claude_mounts() {
 		"output-styles"
 		"workflows"
 		"commands"
+		"statusline.sh"
 	)
-	for d in "${ro_dirs[@]}"; do
-		if [[ -d "$CC_DIR/$d" ]]; then
-			add_mount "$CC_DIR/$d" "/root/.claude/$d" "ro,z"
+	for p in "${ro_paths[@]}"; do
+		if [[ -e "$CC_DIR/$p" ]]; then
+			add_mount "$CC_DIR/$p" "/root/.claude/$p" "ro,z"
 		fi
 	done
 }
