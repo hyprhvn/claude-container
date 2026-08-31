@@ -210,6 +210,30 @@ if ! grep -q -- "-w" "$MOCK_OUT" || ! grep -q -- "$TEST_TMP/workspace" "$MOCK_OU
 fi
 grep -q -- "$TEST_TMP/extra:$TEST_TMP/extra:ro" "$MOCK_OUT" || fail "custom mount -m was not found in podman args"
 
+# --test: PinP shorthand -> :test image, --privileged, selinuxfs ro bind
+echo "--> Testing --test shorthand..."
+PATH="$MOCK_BIN:$PATH" CLAUDE_CONTAINER_DIR="$CC4" "$REPO_ROOT/scripts/claude-container" \
+	--test \
+	"$TEST_TMP/workspace" \
+	--print \
+	"test prompt" 2>/dev/null || fail "claude-container --test (mock podman)"
+
+grep -q -- "docker.io/hyprhvn/claude-container:test" "$MOCK_OUT" || fail "--test did not select the :test image"
+grep -q -- "--privileged" "$MOCK_OUT" || fail "--test did not add --privileged"
+# the selinuxfs bind only materializes where the host has selinuxfs
+if [[ -d /sys/fs/selinux ]]; then
+	grep -q -- "/sys/fs/selinux:/sys/fs/selinux:ro" "$MOCK_OUT" || fail "--test selinuxfs mount missing"
+fi
+
+# --bash: entrypoint shorthand -> --entrypoint bash before the image
+echo "--> Testing --bash shorthand..."
+PATH="$MOCK_BIN:$PATH" CLAUDE_CONTAINER_DIR="$CC4" "$REPO_ROOT/scripts/claude-container" \
+	--bash \
+	"$TEST_TMP/workspace" 2>/dev/null || fail "claude-container --bash (mock podman)"
+
+grep -q -- "--entrypoint" "$MOCK_OUT" || fail "--bash did not add --entrypoint"
+grep -A1 -- "--entrypoint" "$MOCK_OUT" | grep -qx -- "bash" || fail "--bash entrypoint value is not bash"
+
 # 7. Test literal '--' argument separator syntax (assert before the next
 # run overwrites the mock log)
 echo "--> Testing explicit '--' argument separator..."

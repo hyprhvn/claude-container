@@ -92,6 +92,12 @@ Run Claude Code in the current workspace:
 # Pass additional container runtime flags:
 ./scripts/claude-container -C --privileged -C --device=/dev/fuse /workspace
 
+# Launch the PinP test container:
+./scripts/claude-container --test /path/to/project
+
+# Drop into a bash shell instead of claude:
+./scripts/claude-container --bash
+
 # Pass arguments directly to claude inside the container:
 ./scripts/claude-container /workspace --help
 ./scripts/claude-container . -p "explain this codebase"

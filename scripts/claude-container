@@ -61,7 +61,8 @@ NAME
 SYNOPSIS
     $prog [-h | --help] [-v | --verbose] [-q | --quiet]
     $indent [-m | --mount MOUNT]... [--skills-dir DIR]...
-    $indent [-C | --container-arg ARG]...
+    $indent [-C | --container-arg ARG]... [-t | --tag TAG]
+    $indent [--test] [--bash]
     $indent [DIR] [CLAUDE_ARGS...]
 
 DESCRIPTION
@@ -95,8 +96,15 @@ OPTIONS
                                  specified multiple times.
 
         -t, --tag TAG            the tag of the container to start. Defaults to
-								 "full", use "test" for testing and "base" for
-								 minimal setup.
+                                 "full", use "test" for testing and "base" for
+                                 minimal setup.
+
+        --test                   shorthand for PinP testing: equivalent to
+                                 -t test -C --privileged
+                                 -m /sys/fs/selinux:/sys/fs/selinux:ro
+
+        --bash                   start a bash shell instead of claude
+                                 (equivalent to -C --entrypoint -C bash)
 
     Positional Arguments
 
@@ -162,6 +170,14 @@ get_opts() {
 			fi
 			shift
 			CONTAINER_TAG="${1}"
+			;;
+		--test)
+			CONTAINER_TAG="test"
+			CONTAINER_ARGS+=(--privileged)
+			MOUNTS+=("/sys/fs/selinux:/sys/fs/selinux:ro")
+			;;
+		--bash)
+			CONTAINER_ARGS+=(--entrypoint bash)
 			;;
 		--) # separator: all subsequent arguments are positionals / claude args
 			shift

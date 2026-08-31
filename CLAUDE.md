@@ -22,6 +22,11 @@ External skills are discoverable and mounted from:
 
 - Container arguments are passed via `-C` / `--container-arg <ARG>` (e.g. `--privileged`).
 - Claude arguments are passed following the workspace directory `[DIR] [CLAUDE_ARGS...]` or after `--`.
+- `--test`: shorthand for the PinP test container — equivalent to
+  `--tag test`, `-C --privileged`, and a read-only `/sys/fs/selinux`
+  bind (see `docs/testing.md`).
+- `--bash`: start a bash shell instead of claude (equivalent to
+  `-C --entrypoint -C bash`).
 
 ## Initialization & Skel Templates
 

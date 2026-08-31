@@ -8,7 +8,8 @@ The launcher script `scripts/claude-container` supports two distinct levels of a
 
 ```text
 claude-container [-h] [-v | -q] [-m MOUNT]... [--skills-dir DIR]...
-                 [-C | --container-arg ARG]...
+                 [-C | --container-arg ARG]... [-t | --tag TAG]
+                 [--test] [--bash]
                  [DIR] [CLAUDE_ARGS...]
 ```
 
@@ -23,6 +24,11 @@ Pass extra arguments directly to the underlying `podman run` invocation before t
 # Pass custom environment variable
 ./scripts/claude-container -C -e -C "DEBUG=1" /workspace
 ```
+
+Two convenience flags expand fixed combinations of the options above:
+`--test` is equivalent to `-t test -C --privileged
+-m /sys/fs/selinux:/sys/fs/selinux:ro` (the PinP test container, see §3.1),
+and `--bash` is equivalent to `-C --entrypoint -C bash`.
 
 ### B. Claude Arguments (`CLAUDE_ARGS...`)
 
@@ -104,6 +110,11 @@ podman run -it --rm --privileged \
 # inside:
 ./scripts/test-env
 ```
+
+The same container can also be started through the launcher,
+`./scripts/claude-container --test [DIR]`; beyond the raw options above it
+adds the usual `$CC_DIR` mounts, which shadow the image's baked-in files —
+see the caveat in §3.2.
 
 `test-env` is the testing-environment setup and a **hard gate**:
 
