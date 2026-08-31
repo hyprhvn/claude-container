@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Claude Code status line
-# Shows: user@host  dir(git-branch)  |  model  |  context remaining  |  session tokens  |  est. cost
+# Shows: dir(git-branch)  |  model  |  context remaining  |  session tokens  |  est. cost
 #
 # Token totals are summed from the session transcript (each assistant
 # message's usage, i.e. what the provider actually bills per API call).
@@ -12,20 +12,38 @@ set -o pipefail
 CACHE_DIR="${HOME}/.cache/claude-statusline"
 CACHE_FILE="$CACHE_DIR/openrouter-pricing.json"
 CACHE_TTL=3600
+mkdir -p "$CACHE_DIR" 2>/dev/null
 
 input=$(cat)
 
 # ---------- stdin JSON ----------
 model_id=$(printf '%s' "$input" | jq -r '.model.id // empty')
 model_name=$(printf '%s' "$input" | jq -r '.model.display_name // empty')
+session_id=$(printf '%s' "$input" | jq -r '.session_id // empty')
 cwd=$(printf '%s' "$input" | jq -r '.workspace.current_dir // .cwd // empty')
 transcript=$(printf '%s' "$input" | jq -r '.transcript_path // empty')
 
-# ---------- user@host ----------
-userhost="$(whoami 2>/dev/null)@$(hostname -s 2>/dev/null)"
+# ---------- fixed start directory (per session) ----------
+# Show the directory the session started in (project root in nearly all
+# cases), not the live working directory. Cached per session_id in
+# $CACHE_DIR/startdir (line 1: session_id, line 2: start directory).
+start_file="$CACHE_DIR/startdir"
+recorded_session=""
+recorded_dir=""
+if [ -f "$start_file" ]; then
+	recorded_session=$(sed -n '1p' "$start_file" 2>/dev/null)
+	recorded_dir=$(sed -n '2p' "$start_file" 2>/dev/null)
+fi
+if [ "$recorded_session" = "$session_id" ] && [ -n "$recorded_dir" ]; then
+	dir="$recorded_dir"
+else
+	# first render for this session: record the current directory
+	dir="$cwd"
+	[ -n "$cwd" ] && printf '%s\n%s\n' "$session_id" "$cwd" > "$start_file"
+fi
 
-# ---------- directory (with ~) ----------
-dir="${cwd/#$HOME/~}"
+# ---------- directory (basename only) ----------
+dir="${dir##*/}"
 [ -n "$dir" ] || dir="?"
 
 # ---------- git branch ----------
@@ -35,7 +53,6 @@ if [ -n "$cwd" ] && git -C "$cwd" rev-parse --git-dir >/dev/null 2>&1; then
 fi
 
 # ---------- OpenRouter pricing (1h cache) ----------
-mkdir -p "$CACHE_DIR" 2>/dev/null
 now=$(date +%s)
 mtime=$(stat -c %Y "$CACHE_FILE" 2>/dev/null || echo 0)
 if [ ! -f "$CACHE_FILE" ] || [ $((now - mtime)) -gt "$CACHE_TTL" ]; then
@@ -143,7 +160,6 @@ fi
 reset=$'\033[0m'
 dim=$'\033[2m'
 bold=$'\033[1m'
-cyan=$'\033[36m'
 blue=$'\033[34m'
 magenta=$'\033[35m'
 yellow=$'\033[33m'
@@ -152,7 +168,7 @@ red=$'\033[31m'
 orange=$'\033[38;5;208m'
 
 sep=$'  '"$dim"'|'$reset
-out="${bold}${cyan}${userhost}${reset} ${bold}${blue}${dir}${reset}"
+out="${bold}${blue}${dir}${reset}"
 [ -n "$branch" ] && out+=" ${magenta}(${branch})${reset}"
 
 model_disp="${model_name:-$model_id}"
