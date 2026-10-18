@@ -1,4 +1,11 @@
 {
+	"permissions": {
+		"allow": [
+			"Bash(apk add *)",
+			"Bash(apk update *)",
+			"Bash(apk upgrade *)"
+		]
+	},
 	"statusLine": {
 		"type": "command",
 		"command": "/root/.claude/statusline.sh"
