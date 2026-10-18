@@ -5,6 +5,7 @@ You have root privileges inside this container to install any necessary packages
 
 ## Available Tools
 
+If tools can help accomplish a task or keep the context lean, e.g. an LSP in a large refactor or fuzzy search when unsure what to look for, you SHOULD use them.
 The following tools and runtimes are pre-installed in the container environment:
 
 ### System & Networking Utilities
