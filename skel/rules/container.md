@@ -56,6 +56,7 @@ The following tools and runtimes are pre-installed in the container environment:
 
 - **Code Navigation:**
   - `ast-grep`: AST-based search and refactoring
+  - `fzf`: fuzzy find text
   - `ripgrep` (`rg`): fast text search
   - `fd`: fast file traversal
   - `ctags`: symbol indexing

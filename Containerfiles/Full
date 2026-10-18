@@ -112,10 +112,11 @@ RUN --mount=type=cache,target=/var/cache/apk \
         graphviz \
     && npm install -g @mermaid-js/mermaid-cli
 
-# Agent tooling: Bind mount wheels directly into the install step
+# Agent tooling pt. 1
 RUN --mount=type=cache,target=/var/cache/apk \
     apk add \
         ast-grep \
+        fzf \
         ripgrep \
         fd \
         ctags \
@@ -125,6 +126,7 @@ RUN --mount=type=cache,target=/var/cache/apk \
         xmlstarlet \
         miller
 
+# Agent tooling pt. 2: Bind mount wheels directly into the install step
 RUN --mount=type=bind,from=builder,source=/build/wheels,target=/tmp/wheels \
     --mount=type=cache,target=/root/.cache/pip \
     pip install --break-system-packages \
