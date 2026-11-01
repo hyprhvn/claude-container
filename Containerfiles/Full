@@ -168,4 +168,5 @@ RUN --mount=type=cache,target=/var/cache/apk \
         markdownlint-cli
 
 # Claude update
-RUN apk upgrade claude-code
+RUN --mount=type=cache,target=/var/cache/apk \
+    apk upgrade claude-code
