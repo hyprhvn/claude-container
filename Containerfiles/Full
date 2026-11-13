@@ -17,9 +17,10 @@ RUN --mount=type=cache,target=/var/cache/apk \
         cmake
 
 # Build jj-cli with cached cargo registries
+# Version is pinned for rust compatibility
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
-    cargo install --locked --bin jj --root /build/cargo jj-cli
+    cargo install --locked --bin jj --root /build/cargo jj-cli --version 0.45.1
 
 # Pre-compile DuckDB into a reusable wheel
 RUN --mount=type=cache,target=/root/.cache/pip \
