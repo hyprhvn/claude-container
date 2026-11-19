@@ -109,7 +109,7 @@ if [ -n "$entry" ]; then
 	p_cache_write_1h=$(printf '%s' "$entry" | jq -r '.pricing.input_cache_write_1h // empty')
 fi
 
-# ---------- session token totals from transcript ----------
+# ---------- session token totals from transcript (+ subagents) ----------
 tot_in=0
 tot_cc5m=0
 tot_cc1h=0
@@ -117,10 +117,35 @@ tot_cr=0
 tot_out=0
 last_ctx=0
 if [ -n "$transcript" ] && [ -f "$transcript" ]; then
+	files=("$transcript")
+	sub_dir="${transcript%.jsonl}/subagents"
+	if [ -d "$sub_dir" ]; then
+		for f in "$sub_dir"/agent-*.jsonl; do
+			[ -f "$f" ] && files+=("$f")
+		done
+	fi
+
 	while IFS=' ' read -r tot_in tot_cc5m tot_cc1h tot_cr tot_out last_ctx; do
 		break
-	done < <(jq -rs '
-    [ .[]? | select(.type? == "assistant") | .message.usage? // empty ] as $u
+	done < <(jq -rn --arg main "$transcript" '
+    reduce inputs as $line (
+      {by_key: {}, anon: [], last_ctx: 0};
+      if ($line.type? == "assistant") and ($line.message.usage? != null) then
+        ($line.message.usage) as $u
+        | ($line.message.id // "") as $mid
+        | ($line.requestId // "") as $rid
+        | (if $mid != "" or $rid != "" then
+             .by_key["\($mid):\($rid)"] = $u
+           else
+             .anon += [$u]
+           end)
+        | if input_filename == $main then
+            (($u.input_tokens // 0) + ($u.cache_creation_input_tokens // 0) + ($u.cache_read_input_tokens // 0)) as $c
+            | if $c > 0 then .last_ctx = $c else . end
+          else . end
+      else . end
+    )
+    | ([.by_key[]] + .anon) as $u
     | ( $u | map(.input_tokens // 0) | add // 0 ) as $i
     | ( $u | map(.cache_creation.ephemeral_1h_input_tokens // 0) | add // 0 ) as $cc1h
     | ( $u | map(.cache_creation.ephemeral_5m_input_tokens
@@ -128,12 +153,8 @@ if [ -n "$transcript" ] && [ -f "$transcript" ]; then
            | add // 0 ) as $cc5m
     | ( $u | map(.cache_read_input_tokens // 0) | add // 0 ) as $cr
     | ( $u | map(.output_tokens // 0) | add // 0 ) as $o
-    | ( ($u | last) as $l
-        | if $l == null then 0
-          else ($l.input_tokens // 0) + ($l.cache_creation_input_tokens // 0) + ($l.cache_read_input_tokens // 0)
-          end ) as $lc
-    | "\($i) \($cc5m) \($cc1h) \($cr) \($o) \($lc)"
-  ' "$transcript" 2>/dev/null)
+    | "\($i) \($cc5m) \($cc1h) \($cr) \($o) \(.last_ctx)"
+  ' "${files[@]}" 2>/dev/null)
 fi
 tot_in=${tot_in:-0}
 tot_cc5m=${tot_cc5m:-0}
