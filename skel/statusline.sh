@@ -176,9 +176,7 @@ if [ "${ctx_len:-0}" -gt 0 ] 2>/dev/null && [ "$last_ctx" -gt 0 ] 2>/dev/null; t
 fi
 
 # ---------- token breakdown ----------
-cache_parts=()
-[ "$tot_cc" -gt 0 ] && cache_parts+=("cw $(fmt_tokens "$tot_cc")")
-[ "$tot_cr" -gt 0 ] && cache_parts+=("cr $(fmt_tokens "$tot_cr")")
+tok_str="$(fmt_tokens "$tot_cr")/$(fmt_tokens "$tot_cc") (cache r/w) $(fmt_tokens "$tot_in")/$(fmt_tokens "$tot_out") (I/O)"
 
 tok_str="in $(fmt_tokens "$tot_in")"
 if [ "${#cache_parts[@]}" -gt 0 ]; then
