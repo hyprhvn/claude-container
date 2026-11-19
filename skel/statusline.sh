@@ -1,12 +1,9 @@
 #!/usr/bin/env bash
 # Claude Code status line
-# Shows: dir(git-branch)  |  model  |  context remaining  |  session tokens  |  est. cost
+# Shows: dir(git-branch)  |  model  |  context remaining  |  in/cache/out tokens  |  est. cost
 #
-# Token totals are summed from the session transcript (each assistant
-# message's usage, i.e. what the provider actually bills per API call).
-# Cost is estimated from live OpenRouter pricing (cached for 1h in
-# ~/.cache/claude-statusline/). Tiered "overrides" pricing is not applied;
-# the base rate is used, so treat the cost as a rough estimate.
+# Env overrides:
+#   CLAUDE_STATUSLINE_PRICE_MODEL  OpenRouter model ID to price against (e.g. anthropic/claude-sonnet-4.6)
 set -o pipefail
 
 CACHE_DIR="${HOME}/.cache/claude-statusline"
@@ -22,11 +19,9 @@ model_name=$(printf '%s' "$input" | jq -r '.model.display_name // empty')
 session_id=$(printf '%s' "$input" | jq -r '.session_id // empty')
 cwd=$(printf '%s' "$input" | jq -r '.workspace.current_dir // .cwd // empty')
 transcript=$(printf '%s' "$input" | jq -r '.transcript_path // empty')
+ctx_len=$(printf '%s' "$input" | jq -r '.context_window.context_window_size // 0')
 
 # ---------- fixed start directory (per session) ----------
-# Show the directory the session started in (project root in nearly all
-# cases), not the live working directory. Cached per session_id in
-# $CACHE_DIR/startdir (line 1: session_id, line 2: start directory).
 start_file="$CACHE_DIR/startdir"
 recorded_session=""
 recorded_dir=""
@@ -37,7 +32,6 @@ fi
 if [ "$recorded_session" = "$session_id" ] && [ -n "$recorded_dir" ]; then
 	dir="$recorded_dir"
 else
-	# first render for this session: record the current directory
 	dir="$cwd"
 	[ -n "$cwd" ] && printf '%s\n%s\n' "$session_id" "$cwd" > "$start_file"
 fi
@@ -66,62 +60,85 @@ if [ ! -f "$CACHE_FILE" ] || [ $((now - mtime)) -gt "$CACHE_TTL" ]; then
 	}
 fi
 
-# Model id in the session may carry a variant suffix, e.g. qwen/qwen3.8-27b[1m]
-# while OpenRouter lists the base id qwen/qwen3.8-27b. Try exact, then strip suffixes.
 find_model() {
 	[ -f "$CACHE_FILE" ] || return 1
 	jq -c --arg id "$1" '.data[] | select(.id == $id)' "$CACHE_FILE" 2>/dev/null | head -1
 }
-entry=$(find_model "$model_id")
-if [ -z "$entry" ] && [[ "$model_id" == *[* ]]; then
-	entry=$(find_model "${model_id%%[[]*}")
-fi
-if [ -z "$entry" ] && [[ "$model_id" == *:* ]]; then
-	entry=$(find_model "${model_id%%:*}")
-fi
-if [ -z "$entry" ] && [[ "$model_id" == *[*:* ]]; then
-	base="${model_id%%[[]*}"
-	base="${base%%:*}"
-	entry=$(find_model "$base")
+
+lookup_openrouter() {
+	local id="$1" e="" base
+	[ -n "$id" ] && [ -f "$CACHE_FILE" ] || return 1
+	e=$(find_model "$id")
+	if [ -z "$e" ] && [[ "$id" == *[* ]]; then
+		e=$(find_model "${id%%[[]*}")
+	fi
+	if [ -z "$e" ] && [[ "$id" == *:* ]]; then
+		e=$(find_model "${id%%:*}")
+	fi
+	if [ -z "$e" ] && [[ "$id" == *[* || "$id" == *:* ]]; then
+		base="${id%%[[]*}"
+		base="${base%%:*}"
+		e=$(find_model "$base")
+	fi
+	printf '%s' "$e"
+}
+
+price_model_id="${CLAUDE_STATUSLINE_PRICE_MODEL:-$model_id}"
+entry=$(lookup_openrouter "$price_model_id")
+
+# Fall back to OpenRouter context_length only if stdin didn't provide context_window_size
+if [ "${ctx_len:-0}" -le 0 ] 2>/dev/null; then
+	ctx_entry="$entry"
+	if [ -n "$CLAUDE_STATUSLINE_PRICE_MODEL" ] && [ "$price_model_id" != "$model_id" ]; then
+		ctx_entry=$(lookup_openrouter "$model_id")
+		[ -n "$ctx_entry" ] || ctx_entry="$entry"
+	fi
+	[ -n "$ctx_entry" ] && ctx_len=$(printf '%s' "$ctx_entry" | jq -r '.context_length // 0')
 fi
 
-ctx_len=0
 p_prompt=0
 p_completion=0
 p_cache_read=""
 p_cache_write=""
+p_cache_write_1h=""
 if [ -n "$entry" ]; then
-	ctx_len=$(printf '%s' "$entry" | jq -r '.context_length // 0')
 	p_prompt=$(printf '%s' "$entry" | jq -r '.pricing.prompt // 0')
 	p_completion=$(printf '%s' "$entry" | jq -r '.pricing.completion // 0')
 	p_cache_read=$(printf '%s' "$entry" | jq -r '.pricing.input_cache_read // empty')
 	p_cache_write=$(printf '%s' "$entry" | jq -r '.pricing.input_cache_write // empty')
+	p_cache_write_1h=$(printf '%s' "$entry" | jq -r '.pricing.input_cache_write_1h // empty')
 fi
 
 # ---------- session token totals from transcript ----------
 tot_in=0
-tot_cc=0
+tot_cc5m=0
+tot_cc1h=0
 tot_cr=0
 tot_out=0
 last_ctx=0
 if [ -n "$transcript" ] && [ -f "$transcript" ]; then
-	while IFS=' ' read -r tot_in tot_cc tot_cr tot_out last_ctx; do
+	while IFS=' ' read -r tot_in tot_cc5m tot_cc1h tot_cr tot_out last_ctx; do
 		break
 	done < <(jq -rs '
     [ .[]? | select(.type? == "assistant") | .message.usage? // empty ] as $u
-    | ( $u | map(.input_tokens // 0)               | add // 0 ) as $i
-    | ( $u | map(.cache_creation_input_tokens // 0) | add // 0 ) as $cc
-    | ( $u | map(.cache_read_input_tokens // 0)     | add // 0 ) as $cr
-    | ( $u | map(.output_tokens // 0)               | add // 0 ) as $o
+    | ( $u | map(.input_tokens // 0) | add // 0 ) as $i
+    | ( $u | map(.cache_creation.ephemeral_1h_input_tokens // 0) | add // 0 ) as $cc1h
+    | ( $u | map(.cache_creation.ephemeral_5m_input_tokens
+                 // ([0, ((.cache_creation_input_tokens // 0) - (.cache_creation.ephemeral_1h_input_tokens // 0))] | max))
+           | add // 0 ) as $cc5m
+    | ( $u | map(.cache_read_input_tokens // 0) | add // 0 ) as $cr
+    | ( $u | map(.output_tokens // 0) | add // 0 ) as $o
     | ( ($u | last) as $l
         | if $l == null then 0
           else ($l.input_tokens // 0) + ($l.cache_creation_input_tokens // 0) + ($l.cache_read_input_tokens // 0)
           end ) as $lc
-    | "\($i) \($cc) \($cr) \($o) \($lc)"
+    | "\($i) \($cc5m) \($cc1h) \($cr) \($o) \($lc)"
   ' "$transcript" 2>/dev/null)
 fi
 tot_in=${tot_in:-0}
-tot_cc=${tot_cc:-0}
+tot_cc5m=${tot_cc5m:-0}
+tot_cc1h=${tot_cc1h:-0}
+tot_cc=$((tot_cc5m + tot_cc1h))
 tot_cr=${tot_cr:-0}
 tot_out=${tot_out:-0}
 last_ctx=${last_ctx:-0}
@@ -136,12 +153,14 @@ fmt_tokens() {
 }
 cost_str=""
 if [ -n "$entry" ]; then
-	cost=$(awk -v i="$tot_in" -v cc="$tot_cc" -v cr="$tot_cr" -v o="$tot_out" \
-		-v pp="$p_prompt" -v pc="$p_completion" -v prc="$p_cache_read" -v pcw="$p_cache_write" 'BEGIN{
-      if (prc == "") prc = pp * 0.1   # fallback: ~10% of prompt rate
-      if (pcw == "") pcw = pp * 1.25  # fallback: ~125% of prompt rate
-      c = i*pp + cr*prc + cc*pcw + o*pc
-      if (c >= 1)       printf "$%.2f", c
+	cost=$(awk -v i="$tot_in" -v cc5="$tot_cc5m" -v cc1h="$tot_cc1h" -v cr="$tot_cr" -v o="$tot_out" \
+		-v pp="$p_prompt" -v pc="$p_completion" -v prc="$p_cache_read" -v pcw="$p_cache_write" -v pcw1h="$p_cache_write_1h" 'BEGIN{
+      if (pp < 0 || pc < 0) exit
+      if (prc == "")   prc   = pp * 0.1   # fallback: 10% of prompt rate
+      if (pcw == "")   pcw   = pp * 1.25  # fallback: 125% (5m cache write)
+      if (pcw1h == "") pcw1h = pp * 2.0   # fallback: 200% (1h cache write)
+      c = i*pp + cr*prc + cc5*pcw + cc1h*pcw1h + o*pc
+      if (c >= 1)         printf "$%.2f", c
       else if (c >= 0.01) printf "$%.3f", c
       else                printf "$%.4f", c
     }')
@@ -155,6 +174,18 @@ if [ "${ctx_len:-0}" -gt 0 ] 2>/dev/null && [ "$last_ctx" -gt 0 ] 2>/dev/null; t
 	ctx_pct=$(awk -v used="$last_ctx" -v len="$ctx_len" 'BEGIN{ r=(len-used)/len*100; if (r<0) r=0; printf "%d", r }')
 	ctx_str="ctx ${ctx_pct}%"
 fi
+
+# ---------- token breakdown ----------
+cache_parts=()
+[ "$tot_cc" -gt 0 ] && cache_parts+=("cw $(fmt_tokens "$tot_cc")")
+[ "$tot_cr" -gt 0 ] && cache_parts+=("cr $(fmt_tokens "$tot_cr")")
+
+tok_str="in $(fmt_tokens "$tot_in")"
+if [ "${#cache_parts[@]}" -gt 0 ]; then
+	cache_joined=$(IFS=', '; printf '%s' "${cache_parts[*]}")
+	tok_str+=" (${cache_joined})"
+fi
+tok_str+=" / out $(fmt_tokens "$tot_out")"
 
 # ---------- assemble ----------
 reset=$'\033[0m'
@@ -185,7 +216,7 @@ if [ -n "$ctx_str" ]; then
 	out+="$sep ${cctx}${ctx_str}${reset}"
 fi
 
-out+="$sep ${dim}$(fmt_tokens $((tot_in + tot_cc + tot_cr + tot_out))) tok${reset}"
+out+="$sep ${dim}${tok_str}${reset}"
 
 if [ -n "$cost_str" ]; then
 	out+="$sep ${green}${cost_str}${reset} ${dim}est${reset}"
